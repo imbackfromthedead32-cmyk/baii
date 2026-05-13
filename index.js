@@ -1821,14 +1821,46 @@ const commands = [
 // ─────────────────────────────────────────────
 const commandMap = new Map(commands.map((c) => [c.data.name, c]));
 
-async function registerCommands(token, clientId, guildId) {
+async function registerCommands(token, clientId) {
   try {
     const rest = new REST({ version: "10" }).setToken(token);
     const body = commands.map((c) => c.data.toJSON());
-    if (guildId) await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body });
-    else await rest.put(Routes.applicationCommands(clientId), { body });
-    console.log(`✅ Registered ${body.length} commands`);
-  } catch (err) { console.error("❌ Registration failed:", err.message); }
+
+    // Multi-guild support
+    const guildIdsRaw = process.env.GUILD_IDS;
+
+    if (guildIdsRaw) {
+      const guildIds = guildIdsRaw
+        .split(",")
+        .map(id => id.trim())
+        .filter(Boolean);
+
+      // Clear + register each guild
+      for (const guildId of guildIds) {
+        await rest.put(
+          Routes.applicationGuildCommands(clientId, guildId),
+          { body: [] }
+        );
+
+        await rest.put(
+          Routes.applicationGuildCommands(clientId, guildId),
+          { body }
+        );
+
+        console.log(`✅ Registered ${body.length} commands for guild ${guildId}`);
+      }
+    } else {
+      // Global fallback
+      await rest.put(
+        Routes.applicationCommands(clientId),
+        { body }
+      );
+
+      console.log(`✅ Registered ${body.length} global commands`);
+    }
+  } catch (err) {
+    console.error("❌ Registration failed:", err);
+  }
 }
 
 const client = new Client({
