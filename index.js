@@ -11,6 +11,8 @@ const {
 // ─────────────────────────────────────────────
 //  Data layer (inlined — no external files needed)
 // ─────────────────────────────────────────────
+const fs = require("fs");
+const path = require("path");
 const DB_FILE = path.join(__dirname, "db.json");
 
 // ─────────────────────────────────────────────
@@ -427,7 +429,6 @@ function redeemCrewCode(code, userId) {
 //  Express keep-alive
 // ─────────────────────────────────────────────
 const express = require("express");
-const path = require("path");
 const app = express();
 app.use(express.json());
 app.use("/skins", express.static(path.join(__dirname)));
