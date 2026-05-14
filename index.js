@@ -736,13 +736,13 @@ let _overwatchBundleCache = null;
 async function getOverwatchBundle() {
   if (_overwatchBundleCache) return _overwatchBundleCache;
   const skins = await fetchFortniteSkins();
-  const OW_TERMS = ["tracer","genji","kiriko","mercy","pharah","overwatch","dva","soldier:76","reaper","widowmaker","ana","hanzo","bastion","symmetra","winston","zarya","roadhog","junkrat","lucio","moira"];
+  const OW_TERMS = ["tracer","mercy","genji","d.va"];
   const owSkins = skins.filter(s => OW_TERMS.some(t => s.name.toLowerCase().includes(t)));
   const chosen = owSkins.length >= 3 ? owSkins.slice(0,6) : skins.filter(s => s.rarity.toLowerCase() === "epic").slice(0,6);
   _overwatchBundleCache = {
     id: "bundle_overwatch",
     name: "Overwatch Bundle",
-    rarity: "Epic",
+    rarity: "Gaming Legends",
     imageUrl: "https://cdn.discordapp.com/attachments/1504485556325715980/1504535529474232391/fortnite-x-overwatch-all-skins-emotes-prices-full-showcase.jpg?ex=6a075767&is=6a0605e7&hm=ed4a1baf0bbfd118eebed83f45e1eebb6725125ff582cc54e73b18ce19cbd4a5&",
     price: BUNDLE_PRICE,
     isBundle: true,
