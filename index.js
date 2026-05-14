@@ -44,6 +44,16 @@ const FORTNITE_WEAPONS = [
   { id: "hand_cannon",      name: "Hand Cannon",              emoji: "🔫", type: "pistol",    description: "A pistol with stopping power."        },
   { id: "combat_shotgun",   name: "Combat Shotgun",           emoji: "💥", type: "shotgun",   description: "Fast fire, no mercy."                 },
   { id: "grenade_launcher", name: "Grenade Launcher",         emoji: "💣", type: "explosive", description: "Indirect fire specialist."            },
+// ─────────────────────────────────────────────
+const FORTNITE_WEAPONS = [
+  { id: "pump_shotgun",     name: "Pump Shotgun",            emoji: "🔫", type: "shotgun",   description: "One pump — if it lands."              },
+  { id: "heavy_sniper",     name: "Heavy Sniper Rifle",       emoji: "🎯", type: "sniper",    description: "Walls? What walls?"                   },
+  { id: "scar",             name: "SCAR",                     emoji: "⚡", type: "ar",        description: "The gold standard of ARs."            },
+  { id: "rocket_launcher",  name: "Rocket Launcher",          emoji: "🚀", type: "explosive", description: "Shoot first, aim never."              },
+  { id: "bolt_sniper",      name: "Bolt-Action Sniper Rifle", emoji: "🎯", type: "sniper",    description: "Patience is a virtue."                },
+  { id: "hand_cannon",      name: "Hand Cannon",              emoji: "🔫", type: "pistol",    description: "A pistol with stopping power."        },
+  { id: "combat_shotgun",   name: "Combat Shotgun",           emoji: "💥", type: "shotgun",   description: "Fast fire, no mercy."                 },
+  { id: "grenade_launcher", name: "Grenade Launcher",         emoji: "💣", type: "explosive", description: "Indirect fire specialist."            },
   { id: "stinger_smg",      name: "Stinger SMG",              emoji: "⚡", type: "smg",       description: "Up close and very personal."          },
   { id: "thermal_scoped",   name: "Thermal Scoped AR",        emoji: "🔭", type: "ar",        description: "Nobody hides from this."              },
   { id: "rapid_fire_smg",   name: "Rapid Fire SMG",           emoji: "💨", type: "smg",       description: "Half the accuracy, twice the panic."  },
