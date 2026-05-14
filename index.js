@@ -471,7 +471,7 @@ const BUS_IMAGE      = "https://static.wikia.nocookie.net/fortnite/images/7/70/B
 
 const SHOP_RESET_MS       = 24 * 60 * 60 * 1000;
 const SKIN_PRICE          = 1500;
-const BUNDLE_PRICE        = 4000;
+const BUNDLE_PRICE        = 4500;
 const MUSIC_PASS_RESET_MS = 24 * 60 * 60 * 1000;
 const MUSIC_PASS_COST     = 1000;
 
@@ -701,7 +701,7 @@ const STATIC_BUNDLES = [
     id: "bundle_eyekonic",
     name: "EYEKONIC Bundle",
     rarity: "Icon",
-    imageUrl: "",
+    imageUrl: "https://cdn.discordapp.com/attachments/1504485556325715980/1504534511734755418/250701-eyekons-global-membership-is-officially-open-v0-wz97d3saEhaS8vrod4ixzNY0QxorUEbCSmRWHTpJiSg.jpg?ex=6a075674&is=6a0604f4&hm=993c70bb37684b7301e68794f4a799475d76ea69f833852b620f470181495683&",
     price: BUNDLE_PRICE,
     isBundle: true,
     skins: [
@@ -717,7 +717,7 @@ const STATIC_BUNDLES = [
     id: "bundle_pinkyup",
     name: "PINKY UP Bundle",
     rarity: "Icon",
-    imageUrl: "",
+    imageUrl: "https://cdn.discordapp.com/attachments/1504485556325715980/1504534511327772682/channels4_profile.jpg?ex=6a075674&is=6a0604f4&hm=dbb94644bdcd22a375d27c652a0e9eaf79fe9a009e034a02bff375baf22c7f9a&",
     price: BUNDLE_PRICE,
     isBundle: true,
     skins: [
@@ -743,7 +743,7 @@ async function getOverwatchBundle() {
     id: "bundle_overwatch",
     name: "Overwatch Bundle",
     rarity: "Epic",
-    imageUrl: chosen[0]?.imageUrl ?? "",
+    imageUrl: "https://cdn.discordapp.com/attachments/1504485556325715980/1504535529474232391/fortnite-x-overwatch-all-skins-emotes-prices-full-showcase.jpg?ex=6a075767&is=6a0605e7&hm=ed4a1baf0bbfd118eebed83f45e1eebb6725125ff582cc54e73b18ce19cbd4a5&",
     price: BUNDLE_PRICE,
     isBundle: true,
     skins: chosen.map(s => ({ id: s.id, name: s.name, imageUrl: s.imageUrl })),
