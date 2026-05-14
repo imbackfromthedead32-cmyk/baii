@@ -138,7 +138,7 @@ const BP_REWARDS = [
 // Creator codes
 const VALID_CODES = {
   tylajadee: { displayName: "Tylajadee", discount: 0.1, freeSkin: true },
-  qckdream:  { displayName: "Qckdream",  discount: 0.1 },
+  ultravioletkaty:  { displayName: "ultravioletkaty",  discount: 0.1 },
   clovel:    { displayName: "Clovel",    discount: 0.2 },
 };
 
@@ -409,15 +409,14 @@ const CUSTOM_SKINS = [
     name: "Megan",
     description: "Your just a gameboy.",
     rarity: "Icon",
-    imageUrl: `${SKIN_BASE_URL}/file_00000000c49071f48b40e4646744b881-removebg-preview_1778718263699.png`,
-    isStw: false, isCustom: true,
+    imageUrl: `https://cdn.discordapp.com/attachments/1244713742281871380/1504292223901110342/file_00000000c49071f48b40e4646744b881-removebg-preview.png?ex=6a0674ce&is=6a05234e&hm=60e3a93518d5635a4be2e9006043012f64b5e856ed6dd670b7201a221b72398f&`,
   },
   {
     id: "custom_manon",
     name: "Manon",
-    description: "Mano. Not Manon.",
+    description: "I go M.I.A!",
     rarity: "Icon",
-    imageUrl: `${SKIN_BASE_URL}/file_00000000b7c8720a84acd8f392c65c4d-removebg-preview_1778718307202.png`,
+    imageUrl: `https://cdn.discordapp.com/attachments/1244713742281871380/1504292224228130997/file_00000000b7c8720a84acd8f392c65c4d-removebg-preview.png?ex=6a0674ce&is=6a05234e&hm=4f3003d52790adc4770a4e5f2d8fb08bd75590ff0bdd669a78f432e11ee1ac83&`,
     isStw: false, isCustom: true,
   },
   {
@@ -425,7 +424,7 @@ const CUSTOM_SKINS = [
     name: "Lara",
     description: "This aint a debut.",
     rarity: "Icon",
-    imageUrl: `${SKIN_BASE_URL}/Screenshot_20260514_010522_CapCut-removebg-preview_1778718380033.png`,
+    imageUrl: `https://cdn.discordapp.com/attachments/1244713742281871380/1504292224538644562/Screenshot_20260514_010522_CapCut-removebg-preview.png?ex=6a0674ce&is=6a05234e&hm=7cb6b539387ea9d62d54544de0f3ebf60b30e621ea9af98bb01c617e42582bae&`,
     isStw: false, isCustom: true,
   },
   {
@@ -433,7 +432,7 @@ const CUSTOM_SKINS = [
     name: "Daniela",
     description: "Gnarly.",
     rarity: "Icon",
-    imageUrl: `${SKIN_BASE_URL}/Screenshot_20260514_010604_CapCut-removebg-preview_1778718416766.png`,
+    imageUrl: `https://cdn.discordapp.com/attachments/1244713742281871380/1504292224878514267/Screenshot_20260514_010604_CapCut-removebg-preview.png?ex=6a0674ce&is=6a05234e&hm=620dc4b71d4bb6948d11fd71729ce7c078da67542fd48853ce96333ac3f3fba3&`,
     isStw: false, isCustom: true,
   },
   {
@@ -441,7 +440,7 @@ const CUSTOM_SKINS = [
     name: "Yoonchae",
     description: "Party in the hollywood hills.",
     rarity: "Icon",
-    imageUrl: `${SKIN_BASE_URL}/Screenshot_20260514_010636_CapCut-removebg-preview_1778718453907.png`,
+    imageUrl: `https://cdn.discordapp.com/attachments/1244713742281871380/1504292225599803432/Screenshot_20260514_010728_CapCut-removebg-preview.png?ex=6a0674ce&is=6a05234e&hm=99a0e39909fc7cd602faa95246ee5775fbebeb80f21e714cbed04225aafa9275&`,
     isStw: false, isCustom: true,
   },
   {
@@ -449,7 +448,7 @@ const CUSTOM_SKINS = [
     name: "Sophia",
     description: "If you get a call from Gabriela, hang up.",
     rarity: "Icon",
-    imageUrl: `${SKIN_BASE_URL}/Screenshot_20260514_010728_CapCut-removebg-preview_1778718510528.png`,
+    imageUrl: `https://cdn.discordapp.com/attachments/1244713742281871380/1504292225939542016/Screenshot_20260514_010847_CapCut-removebg-preview.png?ex=6a0674cf&is=6a05234f&hm=4d886652c5780a7a319d10f8394c9dc707b51332496efddcddd963b6cda80bf1&`,
     isStw: false, isCustom: true,
   },
   // ── PINKY UP reskins ──
@@ -458,7 +457,7 @@ const CUSTOM_SKINS = [
     name: "Manon (PINKY UP)",
     description: "It's 6. Not 5.",
     rarity: "Icon",
-    imageUrl: `${SKIN_BASE_URL}/Screenshot_20260514_010847_CapCut-removebg-preview_1778718556495.png`,
+    imageUrl: `https://cdn.discordapp.com/attachments/1244713742281871380/1504292226367229992/Screenshot_20260514_011001_CapCut-removebg-preview.png?ex=6a0674cf&is=6a05234f&hm=40f216201f1345c8eb36958c817f54b7dd7a90b38988176c744fed9b1ac1eacb&`,
     isStw: false, isCustom: true,
   },
   {
@@ -466,7 +465,7 @@ const CUSTOM_SKINS = [
     name: "Yoonchae (PINKY UP)",
     description: "The only true wisdom is knowing you know nothing.",
     rarity: "Icon",
-    imageUrl: `${SKIN_BASE_URL}/Screenshot_20260514_011001_CapCut-removebg-preview_1778718594499.png`,
+    imageUrl: `https://cdn.discordapp.com/attachments/1244713742281871380/1504292226770014399/Screenshot_20260514_010921_CapCut-removebg-preview.png?ex=6a0674cf&is=6a05234f&hm=702a6afd1f7b955ce708b1e3fec9361e7181964cd39d75492fda45d6a597ad4a&`,
     isStw: false, isCustom: true,
   },
   {
@@ -474,7 +473,7 @@ const CUSTOM_SKINS = [
     name: "Sophia (PINKY UP)",
     description: "She's screaming from cloud nine.",
     rarity: "Icon",
-    imageUrl: `${SKIN_BASE_URL}/Screenshot_20260514_010921_CapCut-removebg-preview_1778718639125.png`,
+    imageUrl: `https://cdn.discordapp.com/attachments/1244713742281871380/1504292227235447045/Screenshot_20260514_011053_CapCut-removebg-preview.png?ex=6a0674cf&is=6a05234f&hm=5eb96d02e15d02cad654fbaaaa17cf74eba8fd84dc1e755fcfd8138698bd929a&`,
     isStw: false, isCustom: true,
   },
   {
@@ -482,7 +481,7 @@ const CUSTOM_SKINS = [
     name: "Lara (PINKY UP)",
     description: "I bet it goes like this.",
     rarity: "Icon",
-    imageUrl: `${SKIN_BASE_URL}/Screenshot_20260514_011053_CapCut-removebg-preview_1778718690534.png`,
+    imageUrl: `https://cdn.discordapp.com/attachments/1244713742281871380/1504292227235447045/Screenshot_20260514_011053_CapCut-removebg-preview.png?ex=6a0674cf&is=6a05234f&hm=5eb96d02e15d02cad654fbaaaa17cf74eba8fd84dc1e755fcfd8138698bd929a&`,
     isStw: false, isCustom: true,
   },
   {
@@ -490,7 +489,7 @@ const CUSTOM_SKINS = [
     name: "Daniela (PINKY UP)",
     description: "Us against the world shake and shake in the parking lot.",
     rarity: "Icon",
-    imageUrl: `${SKIN_BASE_URL}/Screenshot_20260514_011145_CapCut-removebg-preview_1778718737803.png`,
+    imageUrl: `https://cdn.discordapp.com/attachments/1244713742281871380/1504292276845940848/Screenshot_20260514_011145_CapCut-removebg-preview.png?ex=6a0674db&is=6a05235b&hm=2f6199f81e1076c6af712197fbc5b8c2c7983dc92c5a2799a6bdcaf8b8117b97&`,
     isStw: false, isCustom: true,
   },
   {
@@ -498,7 +497,7 @@ const CUSTOM_SKINS = [
     name: "Megan (PINKY UP)",
     description: "No can touch em if they tried.",
     rarity: "Icon",
-    imageUrl: `${SKIN_BASE_URL}/file_00000000c49071f48b40e4646744b881-removebg-preview_1778718263699.png`,
+    imageUrl: `https://cdn.discordapp.com/attachments/1244713742281871380/1504292277160382554/Screenshot_20260514_011243_CapCut-removebg-preview.png?ex=6a0674db&is=6a05235b&hm=2bf017ff773b8411a75b2d2f0c0fa2bf95d377217759f275d94d4df7d50e8ca1&`,
     isStw: false, isCustom: true,
   },
 ];
