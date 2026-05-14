@@ -347,6 +347,26 @@ function setItemShop(skins) {
 }
 
 // ─────────────────────────────────────────────
+//  Pending Gifts
+// ─────────────────────────────────────────────
+function setPendingGift(recipientId, gift) {
+  if (!_db.pendingGifts) _db.pendingGifts = {};
+  _db.pendingGifts[recipientId] = gift;
+  save();
+}
+
+function getPendingGift(recipientId) {
+  if (!_db.pendingGifts) return null;
+  return _db.pendingGifts[recipientId] ?? null;
+}
+
+function deletePendingGift(recipientId) {
+  if (!_db.pendingGifts) return;
+  delete _db.pendingGifts[recipientId];
+  save();
+}
+
+// ─────────────────────────────────────────────
 //  Music Pass
 // ─────────────────────────────────────────────
 function getMusicPassData() {
@@ -925,13 +945,9 @@ async function spawnRandom(client, guildId, channelId) {
   else await spawnSkinOrBundle(client, guildId, channelId);
 }
 
-// Spawn a skin OR a bundle (25% chance of bundle)
+// Bundles do not spawn automatically — skins only
 async function spawnSkinOrBundle(client, guildId, channelId, forced = false, specificSkin = null) {
-  if (!forced && !specificSkin && Math.random() < 0.25) {
-    await spawnBundle(client, guildId, channelId);
-  } else {
-    await spawnSkin(client, guildId, channelId, forced, specificSkin);
-  }
+  await spawnSkin(client, guildId, channelId, forced, specificSkin);
 }
 
 async function spawnSkin(client, guildId, channelId, forced = false, specificSkin) {
@@ -1433,35 +1449,78 @@ const commands = [
 
   // ── /gift ─────────────────────────────────────
   {
-    data: new SlashCommandBuilder().setName("gift").setDescription("Gift a skin from the Item Shop to another player").addUserOption((o) => o.setName("player").setDescription("Player to gift to").setRequired(true)),
+    data: new SlashCommandBuilder()
+      .setName("gift")
+      .setDescription("Gift a skin from the Item Shop to another player")
+      .addUserOption((o) => o.setName("player").setDescription("Player to gift to").setRequired(true))
+      .addBooleanOption((o) => o.setName("private").setDescription("Send your gift privately so only you can see it?").setRequired(false)),
     async execute(interaction) {
-      await interaction.deferReply();
-      const userId = interaction.user.id, target = interaction.options.getUser("player", true);
-      if (target.id === userId) { await interaction.editReply({ content: "❌ Can't gift yourself!" }); return; }
-      if (target.bot) { await interaction.editReply({ content: "❌ Can't gift bots!" }); return; }
+      const isPrivate = interaction.options.getBoolean("private") ?? false;
+      await interaction.deferReply({ ephemeral: isPrivate });
+      const userId = interaction.user.id;
+      const target = interaction.options.getUser("player", true);
+      if (target.id === userId) { await interaction.editReply({ content: "❌ You can't gift yourself!" }); return; }
+      if (target.bot) { await interaction.editReply({ content: "❌ You can't gift bots!" }); return; }
       resetQuestsIfNeeded(userId); addInteraction(userId);
       const skins = await ensureShopFresh(), user = getUser(userId);
-      const options = skins.map((s, i) => new StringSelectMenuOptionBuilder().setLabel(`${s.name} — ${s.price.toLocaleString()} V-Bucks`).setDescription(s.isBundle ? "Bundle" : `${getRarityEmoji(s.rarity)} ${s.rarity}`).setValue(String(i)));
-      const row = new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("gift_select").setPlaceholder("Choose a skin to gift...").addOptions(options));
-      const msg = await interaction.editReply({ embeds: [new EmbedBuilder().setTitle(`🎁 Gift a Skin to ${target.username}`).setDescription(`Balance: **${user.vbucks.toLocaleString()} V-Bucks**\n\nSelect a skin to gift:`).setColor(0xffd700).setTimestamp()], components: [row] });
+      if (!skins.length) { await interaction.editReply({ content: "❌ The Item Shop is empty right now." }); return; }
+      const options = skins.map((s, i) =>
+        new StringSelectMenuOptionBuilder()
+          .setLabel(`${s.name} — ${s.price.toLocaleString()} V-Bucks`)
+          .setDescription(s.isBundle ? `Bundle: ${(s.bundleSkins??[]).length} skins` : `${getRarityEmoji(s.rarity)} ${s.rarity}`)
+          .setValue(String(i))
+      );
+      const row = new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder().setCustomId("gift_select").setPlaceholder("Choose a skin to gift...").addOptions(options)
+      );
+      const msg = await interaction.editReply({
+        embeds: [new EmbedBuilder()
+          .setTitle(`🎁 Gift a Skin to ${target.username}`)
+          .setDescription(`**Your balance:** ${user.infiniteVbucks ? "∞" : user.vbucks.toLocaleString()} V-Bucks\n\nSelect a skin to gift — the V-Bucks will be deducted from your account.\nYour friend won't receive it until their next interaction.`)
+          .setColor(0xffd700)
+          .setTimestamp()],
+        components: [row],
+      });
       const collector = msg.createMessageComponentCollector({ componentType: ComponentType.StringSelect, time: 60000, filter: (i) => i.user.id === userId });
       collector.on("collect", async (sel) => {
-        const item = skins[parseInt(sel.values[0])], freshUser = getUser(userId);
-        if (!freshUser.infiniteVbucks && freshUser.vbucks < item.price) { await sel.update({ content: `❌ Need **${item.price.toLocaleString()} V-Bucks**.`, embeds: [], components: [] }); return; }
-        if (!freshUser.infiniteVbucks) addVbucks(userId, -item.price);
-        if (item.isBundle) {
-          for (const s of (item.bundleSkins ?? [])) addSkinToInventory(target.id, s.id + "_gift_" + Date.now(), s.name);
-        } else {
-          addSkinToInventory(target.id, item.skinId, item.name);
+        const item = skins[parseInt(sel.values[0])];
+        const freshUser = getUser(userId);
+        if (!freshUser.infiniteVbucks && freshUser.vbucks < item.price) {
+          await sel.update({ content: `❌ You need **${item.price.toLocaleString()} V-Bucks** to gift this.`, embeds: [], components: [] });
+          return;
         }
+        if (!freshUser.infiniteVbucks) addVbucks(userId, -item.price);
         updateUser(userId, { giftsGiven: (freshUser.giftsGiven ?? 0) + 1 });
         checkAndAwardAchievements(userId);
+        // Store the pending gift — item is NOT added to recipient yet
+        setPendingGift(target.id, {
+          fromId: userId,
+          fromName: interaction.user.username,
+          item: {
+            name: item.name,
+            price: item.price,
+            rarity: item.rarity ?? "Common",
+            skinId: item.skinId,
+            isBundle: !!item.isBundle,
+            bundleSkins: item.bundleSkins ?? [],
+          },
+          notified: false,
+          guildId: interaction.guildId,
+        });
         const updated = getUser(userId);
-        await sel.update({ embeds: [new EmbedBuilder().setTitle("🎁 Gift Sent!").setDescription(`You gifted **${item.name}** to <@${target.id}>!\n\n💰 Spent: ${item.price.toLocaleString()} V-Bucks\n💳 Remaining: ${updated.infiniteVbucks ? "∞" : updated.vbucks.toLocaleString()} V-Bucks`).setColor(0xffd700).setTimestamp()], components: [] });
-        try { const dm = await target.createDM(); await dm.send({ embeds: [new EmbedBuilder().setTitle("🎁 You Received a Gift!").setDescription(`<@${userId}> gifted you **${item.name}**!${item.isBundle ? `\n\n📦 All ${(item.bundleSkins??[]).length} skins added to your locker!` : ""}`).setColor(getRarityColor(item.rarity)).setTimestamp()] }); } catch {}
+        await sel.update({
+          embeds: [new EmbedBuilder()
+            .setTitle("🎁 Gift Sent!")
+            .setDescription(`You gifted **${item.name}** to <@${target.id}>!\n\n💰 **Spent:** ${item.price.toLocaleString()} V-Bucks\n💳 **Remaining:** ${updated.infiniteVbucks ? "∞" : updated.vbucks.toLocaleString()} V-Bucks\n\n*They'll be notified next time they use a command!*`)
+            .setColor(0xffd700)
+            .setTimestamp()],
+          components: [],
+        });
         collector.stop();
       });
-      collector.on("end", (_, r) => { if (r === "time") interaction.editReply({ content: "⏰ Timed out.", embeds: [], components: [] }).catch(() => {}); });
+      collector.on("end", (_, r) => {
+        if (r === "time") interaction.editReply({ content: "⏰ Timed out.", embeds: [], components: [] }).catch(() => {});
+      });
     },
   },
 
@@ -2351,6 +2410,23 @@ client.on("interactionCreate", async (interaction) => {
   try {
     if (interaction.isAutocomplete()) { const cmd = commandMap.get(interaction.commandName); if (cmd?.autocomplete) await cmd.autocomplete(interaction); return; }
     if (!interaction.isChatInputCommand()) return;
+
+    // ── Pending gift notification ──────────────────────────────────────────
+    const pendingGift = getPendingGift(interaction.user.id);
+    if (pendingGift && !pendingGift.notified) {
+      pendingGift.notified = true;
+      setPendingGift(interaction.user.id, pendingGift);
+      const GIFT_IMAGE_URL = "";
+      const giftEmbed = new EmbedBuilder()
+        .setTitle("🎁 You have a gift waiting!")
+        .setDescription(`**<@${pendingGift.fromId}>** sent you a gift!\n\n*Type \`open\` in this channel to unwrap it...*`)
+        .setColor(0xffd700)
+        .setTimestamp();
+      if (GIFT_IMAGE_URL) giftEmbed.setImage(GIFT_IMAGE_URL);
+      await interaction.channel.send({ content: `<@${interaction.user.id}>`, embeds: [giftEmbed] }).catch(() => {});
+    }
+    // ──────────────────────────────────────────────────────────────────────
+
     const cmd = commandMap.get(interaction.commandName);
     if (!cmd) return;
     await cmd.execute(interaction);
@@ -2364,7 +2440,38 @@ client.on("interactionCreate", async (interaction) => {
 
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
-  if (message.content.trim().toLowerCase() === "buy") await handleBuyMessage(message).catch(console.error);
+  const content = message.content.trim().toLowerCase();
+
+  if (content === "buy") await handleBuyMessage(message).catch(console.error);
+
+  // ── Gift opening ───────────────────────────────────────────────────────
+  if (content === "open") {
+    const gift = getPendingGift(message.author.id);
+    if (!gift || !gift.notified) return;
+    deletePendingGift(message.author.id);
+
+    const { item, fromId } = gift;
+
+    // Add the item(s) to the recipient's inventory now
+    if (item.isBundle) {
+      for (const s of (item.bundleSkins ?? [])) addSkinToInventory(message.author.id, s.id + "_gift_" + Date.now(), s.name);
+    } else {
+      addSkinToInventory(message.author.id, item.skinId, item.name);
+    }
+
+    const revealDesc = item.isBundle
+      ? `📦 **${item.name}** *(Bundle)*\n\n**Includes:**\n${(item.bundleSkins ?? []).map(s => `• **${s.name}**`).join("\n")}\n\n*Gifted by <@${fromId}> — all skins added to your locker!*`
+      : `${getRarityEmoji(item.rarity)} **${item.name}**\n✨ Rarity: **${item.rarity}**\n\n*Gifted by <@${fromId}> — added to your locker!*`;
+
+    await message.reply({
+      embeds: [new EmbedBuilder()
+        .setTitle("🎉 Gift Opened!")
+        .setDescription(revealDesc)
+        .setColor(getRarityColor(item.rarity))
+        .setTimestamp()],
+    }).catch(console.error);
+  }
+  // ──────────────────────────────────────────────────────────────────────
 });
 
 client.on("error", (err) => console.error("Discord client error:", err));
