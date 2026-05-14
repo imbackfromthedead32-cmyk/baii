@@ -2023,22 +2023,6 @@ if (token) client.login(token).catch((err) => console.error("❌ Discord login f
 else console.warn("⚠️ No DISCORD_TOKEN — Express server running but bot is offline.");
 
 process.on("SIGTERM", () => { client.destroy(); process.exit(0); });
-  { id: "pump_shotgun",     name: "Pump Shotgun",            emoji: "🔫", type: "shotgun",   description: "One pump — if it lands."              },
-  { id: "heavy_sniper",     name: "Heavy Sniper Rifle",       emoji: "🎯", type: "sniper",    description: "Walls? What walls?"                   },
-  { id: "scar",             name: "SCAR",                     emoji: "⚡", type: "ar",        description: "The gold standard of ARs."            },
-  { id: "rocket_launcher",  name: "Rocket Launcher",          emoji: "🚀", type: "explosive", description: "Shoot first, aim never."              },
-  { id: "bolt_sniper",      name: "Bolt-Action Sniper Rifle", emoji: "🎯", type: "sniper",    description: "Patience is a virtue."                },
-  { id: "hand_cannon",      name: "Hand Cannon",              emoji: "🔫", type: "pistol",    description: "A pistol with stopping power."        },
-  { id: "combat_shotgun",   name: "Combat Shotgun",           emoji: "💥", type: "shotgun",   description: "Fast fire, no mercy."                 },
-  { id: "grenade_launcher", name: "Grenade Launcher",         emoji: "💣", type: "explosive", description: "Indirect fire specialist."            },
-  { id: "stinger_smg",      name: "Stinger SMG",              emoji: "⚡", type: "smg",       description: "Up close and very personal."          },
-  { id: "thermal_scoped",   name: "Thermal Scoped AR",        emoji: "🔭", type: "ar",        description: "Nobody hides from this."              },
-  { id: "rapid_fire_smg",   name: "Rapid Fire SMG",           emoji: "💨", type: "smg",       description: "Half the accuracy, twice the panic."  },
-  { id: "mythic_goldfish",  name: "Mythic Goldfish",           emoji: "🐟", type: "special",   description: "It's a fish. A very powerful fish."  },
-  { id: "flint_knock",      name: "Flintlock Pistol",         emoji: "🔫", type: "pistol",    description: "Knocks them back to the Stone Age."  },
-  { id: "minigun",          name: "Minigun",                  emoji: "🔥", type: "ar",        description: "Sustained fire destroyer."            },
-  { id: "shockwave_launcher", name: "Shockwave Launcher",     emoji: "💫", type: "explosive", description: "Not lethal. Just humiliating."        },
-];
 const MULTI_AMMO_TYPES = new Set(["smg", "ar"]);
 function isMultiAmmoWeapon(w) { return MULTI_AMMO_TYPES.has(w.type); }
 function getWeaponByName(name) {
