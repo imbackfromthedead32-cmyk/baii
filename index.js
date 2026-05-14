@@ -9,22 +9,419 @@ const {
 } = require("discord.js");
 
 // ─────────────────────────────────────────────
-//  Data layer (SQLite via better-sqlite3)
+//  Data layer (inlined — no external files needed)
 // ─────────────────────────────────────────────
-const {
-  getUser, updateUser, getAllUsers,
-  addVbucks, removeVbucks, addXP, addInteraction,
-  addSkinToInventory, equipSkin, getLocker,
-  resetQuestsIfNeeded, progressQuest, freshQuests,
-  assignFoundersQuests, checkFoundersQuests,
-  isEliminated, getEliminationTimeLeft, hasActiveFreeSkin,
-  getItemShop, setItemShop,
-  getMusicPassData, setMusicPass, addMusicPassPurchaser, isMusicPassPurchaser,
-  getSpawnChannel, setSpawnChannel, getAllGuildSpawnChannels,
-  setCoinflipChallenge, getCoinflipChallenge, deleteCoinflipChallenge,
-  addCrewCode, getCrewCode, redeemCrewCode,
-  xpForLevel, calculateLevelFromXP,
-} = require("./data");
+const DB_FILE = path.join(__dirname, "db.json");
+
+// ─────────────────────────────────────────────
+//  Load / Save
+// ─────────────────────────────────────────────
+function loadDB() {
+  try {
+    if (fs.existsSync(DB_FILE)) {
+      return JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
+    }
+  } catch {}
+  return {};
+}
+
+function saveDB(db) {
+  try {
+    fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
+  } catch (err) {
+    console.error("[data] saveDB failed:", err.message);
+  }
+}
+
+let _db = loadDB();
+function db() { return _db; }
+function save() { saveDB(_db); }
+
+// ─────────────────────────────────────────────
+//  Default structures
+// ─────────────────────────────────────────────
+function defaultUser() {
+  return {
+    vbucks: 0,
+    infiniteVbucks: false,
+    xp: 0,
+    level: 1,
+    inventory: [],
+    inventoryNames: {},
+    equippedSkin: null,
+    weapons: [],
+    buildMaterial: "none",
+    buildCharges: 0,
+    boxes: 0,
+    foundersBoxes: 0,
+    hasFoundersPack: false,
+    luckPotion: 0,
+    xtraLuckPotion: 0,
+    godlyLuckPotion: 0,
+    activeLuck: "none",
+    godChest: 0,
+    mysteriousChest: 0,
+    dailyStreak: 0,
+    lastDailyClaim: 0,
+    lastLlama: 0,
+    llamaOpens: 0,
+    lastFish: 0,
+    fishCaught: 0,
+    lastStorm: 0,
+    stormsSurvived: 0,
+    lastSupplyDrop: 0,
+    supplyDrops: 0,
+    interactionCount: 0,
+    eliminatedUntil: 0,
+    achievementsEarned: [],
+    hasCreatorCode: false,
+    creatorDiscount: 0,
+    freeSkinExpiry: 0,
+    freeSkinRedeemed: false,
+    freeSkinIds: [],
+    shopPurchases: 0,
+    shopSkins: [],
+    shopSkinPrices: {},
+    refundCooldowns: {},
+    coinflipsWon: 0,
+    coinflipsPlayed: 0,
+    giftsGiven: 0,
+    tradesCompleted: 0,
+    timesBuilt: 0,
+    duelsPlayed: 0,
+    zeropointUses: 0,
+    vbucksChecked: 0,
+    boxesOpened: 0,
+    spawnCatches: 0,
+    brokeAttempt: false,
+    hasMusicPass: false,
+    musicPassExpiry: 0,
+    quests: [],
+    questProgress: {},
+    questLastReset: 0,
+    foundersQuests: [],
+    foundersQuestProgress: {},
+  };
+}
+
+function defaultStore() {
+  return {
+    users: {},
+    itemShop: { skins: [], lastReset: 0 },
+    musicPass: { skin: null, lastReset: 0, purchasers: [] },
+    spawnChannels: {},
+    coinflipChallenges: {},
+    crewCodes: {},
+  };
+}
+
+// Ensure top-level keys exist
+if (!_db.users)               _db.users               = {};
+if (!_db.itemShop)            _db.itemShop            = { skins: [], lastReset: 0 };
+if (!_db.musicPass)           _db.musicPass           = { skin: null, lastReset: 0, purchasers: [] };
+if (!_db.spawnChannels)       _db.spawnChannels       = {};
+if (!_db.coinflipChallenges)  _db.coinflipChallenges  = {};
+if (!_db.crewCodes)           _db.crewCodes           = {};
+save();
+
+// ─────────────────────────────────────────────
+//  XP helpers
+// ─────────────────────────────────────────────
+function xpForLevel(level) {
+  return level * 200;
+}
+
+function calculateLevelFromXP(xp) {
+  let level = 1, total = 0;
+  while (total + xpForLevel(level) <= xp) {
+    total += xpForLevel(level);
+    level++;
+  }
+  return level;
+}
+
+// ─────────────────────────────────────────────
+//  User helpers
+// ─────────────────────────────────────────────
+function getUser(userId) {
+  if (!_db.users[userId]) {
+    _db.users[userId] = defaultUser();
+    save();
+  }
+  // Fill in any fields added after user creation
+  const def = defaultUser();
+  let changed = false;
+  for (const [k, v] of Object.entries(def)) {
+    if (_db.users[userId][k] === undefined) {
+      _db.users[userId][k] = v;
+      changed = true;
+    }
+  }
+  if (changed) save();
+  return _db.users[userId];
+}
+
+function updateUser(userId, updates) {
+  const user = getUser(userId);
+  Object.assign(user, updates);
+  save();
+}
+
+function getAllUsers() {
+  return _db.users;
+}
+
+// ─────────────────────────────────────────────
+//  V-Bucks / XP
+// ─────────────────────────────────────────────
+function addVbucks(userId, amount) {
+  const user = getUser(userId);
+  if (user.infiniteVbucks && amount < 0) return;
+  user.vbucks = Math.max(0, (user.vbucks || 0) + amount);
+  save();
+}
+
+function removeVbucks(userId, amount) {
+  addVbucks(userId, -Math.abs(amount));
+}
+
+function addXP(userId, amount) {
+  const user = getUser(userId);
+  user.xp = (user.xp || 0) + amount;
+  user.level = calculateLevelFromXP(user.xp);
+  save();
+}
+
+// ─────────────────────────────────────────────
+//  Interactions / milestone
+// ─────────────────────────────────────────────
+function addInteraction(userId) {
+  const user = getUser(userId);
+  user.interactionCount = (user.interactionCount || 0) + 1;
+  const gainedVbucks = user.interactionCount % 30 === 0;
+  if (gainedVbucks) {
+    user.vbucks = (user.vbucks || 0) + 250;
+  }
+  save();
+  return { gainedVbucks };
+}
+
+// ─────────────────────────────────────────────
+//  Inventory / locker
+// ─────────────────────────────────────────────
+function addSkinToInventory(userId, skinId, skinName) {
+  const user = getUser(userId);
+  if (!user.inventory.includes(skinId)) {
+    user.inventory.push(skinId);
+  }
+  user.inventoryNames[skinId + "_" + Date.now()] = skinName;
+  save();
+}
+
+function equipSkin(userId, skinId) {
+  const user = getUser(userId);
+  user.equippedSkin = skinId;
+  save();
+}
+
+function getLocker(userId) {
+  const user = getUser(userId);
+  return {
+    skins: Object.entries(user.inventoryNames).map(([k, n]) => ({ key: k, name: n })),
+    equipped: user.equippedSkin,
+  };
+}
+
+// ─────────────────────────────────────────────
+//  Daily quests
+// ─────────────────────────────────────────────
+const DAILY_QUEST_POOL = [
+  { id: "catch_skins",    label: "Catch 3 spawned skins",            xpReward: 300, required: 3 },
+  { id: "win_coinflip",   label: "Win a coin flip",                  xpReward: 200, required: 1 },
+  { id: "check_shop",     label: "Browse the item shop",             xpReward: 100, required: 1 },
+  { id: "check_vbucks",   label: "Check your V-Bucks balance",       xpReward:  50, required: 1 },
+  { id: "challenge_flip", label: "Challenge someone to a coin flip", xpReward: 150, required: 1 },
+];
+
+function freshQuests() {
+  return DAILY_QUEST_POOL.map((q) => ({ ...q, progress: 0, completed: false }));
+}
+
+function resetQuestsIfNeeded(userId) {
+  const user = getUser(userId);
+  const now = Date.now(), day = 24 * 60 * 60 * 1000;
+  if (!user.questLastReset || now - user.questLastReset > day) {
+    user.quests = freshQuests();
+    user.questProgress = {};
+    user.questLastReset = now;
+    save();
+  }
+}
+
+function progressQuest(userId, questId) {
+  const user = getUser(userId);
+  if (!user.quests || !user.quests.length) return;
+  const quest = user.quests.find((q) => q.id === questId);
+  if (!quest || quest.completed) return;
+  quest.progress = (quest.progress || 0) + 1;
+  if (quest.progress >= quest.required) {
+    quest.completed = true;
+    addXP(userId, quest.xpReward);
+  }
+  save();
+}
+
+// ─────────────────────────────────────────────
+//  Founders quests
+// ─────────────────────────────────────────────
+const FOUNDERS_QUEST_POOL_DATA = [
+  { id: "catch_skins_3",  label: "Catch 3 skins",             stat: "spawnCatches",    required: 3    },
+  { id: "catch_skins_5",  label: "Catch 5 skins",             stat: "spawnCatches",    required: 5    },
+  { id: "win_flip_1",     label: "Win 1 coin flip",           stat: "coinflipsWon",    required: 1    },
+  { id: "win_flip_3",     label: "Win 3 coin flips",          stat: "coinflipsWon",    required: 3    },
+  { id: "buy_shop_1",     label: "Buy a skin from Shop",      stat: "shopPurchases",   required: 1    },
+  { id: "open_stw",       label: "Open 1 STW Box",            stat: "boxesOpened",     required: 1    },
+  { id: "daily_claim",    label: "Claim daily reward",        stat: "dailyStreak",     required: 1    },
+  { id: "earn_xp_300",    label: "Earn 300 XP",               stat: "xp",              required: 300  },
+  { id: "level_3",        label: "Reach Level 3",             stat: "level",           required: 3    },
+];
+
+function assignFoundersQuests(userId) {
+  const user = getUser(userId);
+  if (!user.hasFoundersPack) return;
+  const shuffled = [...FOUNDERS_QUEST_POOL_DATA].sort(() => Math.random() - 0.5).slice(0, 3);
+  user.foundersQuests = shuffled.map((q) => ({ ...q, completed: false }));
+  user.foundersQuestProgress = {};
+  save();
+}
+
+function checkFoundersQuests(userId) {
+  const user = getUser(userId);
+  if (!user.foundersQuests || !user.foundersQuests.length) return [];
+  const completed = [];
+  for (const q of user.foundersQuests) {
+    if (q.completed) continue;
+    const val = user[q.stat] || 0;
+    if (val >= q.required) {
+      q.completed = true;
+      completed.push(q.label);
+    }
+  }
+  if (completed.length) save();
+  return completed;
+}
+
+// ─────────────────────────────────────────────
+//  Elimination
+// ─────────────────────────────────────────────
+function isEliminated(userId) {
+  const user = getUser(userId);
+  return (user.eliminatedUntil || 0) > Date.now();
+}
+
+function getEliminationTimeLeft(userId) {
+  const user = getUser(userId);
+  return Math.max(0, (user.eliminatedUntil || 0) - Date.now());
+}
+
+// ─────────────────────────────────────────────
+//  Free skin (creator code perk)
+// ─────────────────────────────────────────────
+function hasActiveFreeSkin(userId) {
+  const user = getUser(userId);
+  return (user.freeSkinExpiry || 0) > Date.now() && !(user.freeSkinRedeemed || false);
+}
+
+// ─────────────────────────────────────────────
+//  Item Shop
+// ─────────────────────────────────────────────
+function getItemShop() {
+  return _db.itemShop;
+}
+
+function setItemShop(skins) {
+  _db.itemShop = { skins, lastReset: Date.now() };
+  save();
+}
+
+// ─────────────────────────────────────────────
+//  Music Pass
+// ─────────────────────────────────────────────
+function getMusicPassData() {
+  return _db.musicPass;
+}
+
+function setMusicPass(skin) {
+  _db.musicPass.skin = skin;
+  _db.musicPass.lastReset = Date.now();
+  _db.musicPass.purchasers = [];
+  save();
+}
+
+function addMusicPassPurchaser(userId) {
+  if (!_db.musicPass.purchasers) _db.musicPass.purchasers = [];
+  if (!_db.musicPass.purchasers.includes(userId)) {
+    _db.musicPass.purchasers.push(userId);
+    save();
+  }
+}
+
+function isMusicPassPurchaser(userId) {
+  return (_db.musicPass.purchasers || []).includes(userId);
+}
+
+// ─────────────────────────────────────────────
+//  Spawn channels
+// ─────────────────────────────────────────────
+function getSpawnChannel(guildId) {
+  return _db.spawnChannels[guildId] || null;
+}
+
+function setSpawnChannel(guildId, channelId) {
+  _db.spawnChannels[guildId] = channelId;
+  save();
+}
+
+function getAllGuildSpawnChannels() {
+  return _db.spawnChannels || {};
+}
+
+// ─────────────────────────────────────────────
+//  Coinflip challenges
+// ─────────────────────────────────────────────
+function setCoinflipChallenge(id, data) {
+  _db.coinflipChallenges[id] = data;
+  save();
+}
+
+function getCoinflipChallenge(id) {
+  return _db.coinflipChallenges[id] || null;
+}
+
+function deleteCoinflipChallenge(id) {
+  delete _db.coinflipChallenges[id];
+  save();
+}
+
+// ─────────────────────────────────────────────
+//  Crew codes
+// ─────────────────────────────────────────────
+function addCrewCode(code) {
+  _db.crewCodes[code] = { used: false, usedBy: null, createdAt: Date.now() };
+  save();
+}
+
+function getCrewCode(code) {
+  return _db.crewCodes[code] || null;
+}
+
+function redeemCrewCode(code, userId) {
+  if (_db.crewCodes[code]) {
+    _db.crewCodes[code].used   = true;
+    _db.crewCodes[code].usedBy = userId;
+    save();
+  }
+}
 
 // ─────────────────────────────────────────────
 //  Express keep-alive
