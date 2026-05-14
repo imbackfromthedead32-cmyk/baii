@@ -318,7 +318,7 @@ let _overwatchBundleCache = null;
 async function getOverwatchBundle() {
   if (_overwatchBundleCache) return _overwatchBundleCache;
   const skins = await fetchFortniteSkins();
-  const OW_TERMS = ["tracer","genji",","mercy","pharah","overwatch","d.va","soldier:76","reaper","widowmaker","ana","hanzo","bastion","symmetra","winston","zarya","roadhog","junkrat","lucio","moira"];
+  const OW_TERMS = ["tracer","genji","mercy","pharah","overwatch","d.va","soldier:76","reaper","widowmaker","ana","hanzo","bastion","symmetra","winston","zarya","roadhog","junkrat","lucio","moira"];
   const owSkins = skins.filter(s => OW_TERMS.some(t => s.name.toLowerCase().includes(t)));
   const chosen = owSkins.length >= 3 ? owSkins.slice(0,6) : skins.filter(s => s.rarity.toLowerCase() === "epic").slice(0,6);
   _overwatchBundleCache = {
