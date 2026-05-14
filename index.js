@@ -44,8 +44,6 @@ const FORTNITE_WEAPONS = [
   { id: "hand_cannon",      name: "Hand Cannon",              emoji: "🔫", type: "pistol",    description: "A pistol with stopping power."        },
   { id: "combat_shotgun",   name: "Combat Shotgun",           emoji: "💥", type: "shotgun",   description: "Fast fire, no mercy."                 },
   { id: "grenade_launcher", name: "Grenade Launcher",         emoji: "💣", type: "explosive", description: "Indirect fire specialist."            },
-// ─────────────────────────────────────────────
-const FORTNITE_WEAPONS = [
   { id: "pump_shotgun",     name: "Pump Shotgun",            emoji: "🔫", type: "shotgun",   description: "One pump — if it lands."              },
   { id: "heavy_sniper",     name: "Heavy Sniper Rifle",       emoji: "🎯", type: "sniper",    description: "Walls? What walls?"                   },
   { id: "scar",             name: "SCAR",                     emoji: "⚡", type: "ar",        description: "The gold standard of ARs."            },
