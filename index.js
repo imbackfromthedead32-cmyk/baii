@@ -1147,7 +1147,7 @@ const commands = [
       const { embed, row } = buildInvPage(0);
       const msg = await interaction.reply({ embeds: [embed], components: [row], fetchReply: true });
       const collector = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 5*60*1000, filter: (b) => b.user.id === userId });
-      collector.on("collect", async (btn) => { if (btn.customId === "inv_prev") page = Math.max(0, page-1); else page = Math.min(totalPages-1, page+1); await btn.update({ ...buildInvPage(page) }); });
+      collector.on("collect", async (btn) => { if (btn.customId === "inv_prev") page = Math.max(0, page-1); else page = Math.min(totalPages-1, page+1); const { embed: _ie, row: _ir } = buildInvPage(page); await btn.update({ embeds: [_ie], components: [_ir] }); });
       collector.on("end", async () => { const { embed: e } = buildInvPage(page); await interaction.editReply({ embeds: [e], components: [] }).catch(() => {}); });
     },
   },
@@ -1502,7 +1502,7 @@ const commands = [
       collector.on("collect", async (btn) => {
         const { totalPages, safePage } = buildSkinPage(page);
         if (btn.customId === "skin_prev") page = Math.max(0, safePage-1); else page = Math.min(totalPages-1, safePage+1);
-        await btn.update({ ...buildSkinPage(page) });
+        const { embed: _se, row: _sr } = buildSkinPage(page); await btn.update({ embeds: [_se], components: [_sr] });
       });
       collector.on("end", async () => { const { embed: e } = buildSkinPage(page); await interaction.editReply({ embeds: [e], components: [] }).catch(() => {}); });
     },
@@ -1526,4 +1526,453 @@ const commands = [
       const LLAMA_TABLE = [
         { weight: 20, fn: () => { addVbucks(userId, 200); return { desc: "💰 **200 V-Bucks**!", color: 0x00d4ff }; } },
         { weight: 15, fn: () => { addVbucks(userId, 500); return { desc: "💰 **500 V-Bucks**!", color: 0x00d4ff }; } },
-        { weight: 10, fn: () => { addVbucks(userId, 1000); ret
+        { weight: 10, fn: () => { addVbucks(userId, 1000); return { desc: "💰 **1,000 V-Bucks!**", color: 0xf4a01a }; } },
+        { weight: 15, fn: () => { const w = randomWeapon(); updateUser(userId, { weapons: [...(getUser(userId).weapons??[]), w.name] }); return { desc: `${w.emoji} **${w.name}** *(weapon)!*`, color: 0xff6600 }; } },
+        { weight: 10, fn: () => { updateUser(userId, { boxes: (getUser(userId).boxes??0)+2 }); return { desc: "📦 **2 STW Boxes**!", color: 0xff6600 }; } },
+        { weight: 8,  fn: () => { updateUser(userId, { luckPotion: (getUser(userId).luckPotion??0)+1 }); return { desc: "🍀 **Luck Potion**!", color: 0x2ecc71 }; } },
+        { weight: 6,  fn: () => { updateUser(userId, { xtraLuckPotion: (getUser(userId).xtraLuckPotion??0)+1 }); return { desc: "🔮 **Xtra Luck Potion**!", color: 0x9b4dca }; } },
+        { weight: boostedChance(4, luck), fn: async () => { const skin = await getRandomSkin(); addSkinToInventory(userId, skin.id, skin.name); return { desc: `${getRarityEmoji(skin.rarity)} **${skin.name}** *(${skin.rarity} skin!)* 🎮`, color: getRarityColor(skin.rarity), image: skin.imageUrl }; } },
+        { weight: boostedChance(3, luck), fn: () => { updateUser(userId, { foundersBoxes: (getUser(userId).foundersBoxes??0)+1 }); return { desc: "📦 **Founders Box!**", color: 0xffd700 }; } },
+        { weight: boostedChance(2, luck), fn: () => { updateUser(userId, { godChest: (getUser(userId).godChest??0)+1 }); return { desc: "🌟 **GOD CHEST!** Extremely rare!", color: 0xffd700 }; } },
+      ];
+      const total = LLAMA_TABLE.reduce((a,b) => a+b.weight, 0); let r = Math.random()*total; let chosen = LLAMA_TABLE[0];
+      for (const item of LLAMA_TABLE) { r -= item.weight; if (r <= 0) { chosen = item; break; } }
+      const result = await chosen.fn();
+      checkAndAwardAchievements(userId);
+      const embed = new EmbedBuilder().setTitle("🦙 Supply Llama Opened!").setDescription(`You cracked open the **Supply Llama** and found...\n\n${result.desc}\n\n+50 XP earned!`).setColor(result.color).setFooter({ text: "Next llama available in 1 hour" }).setTimestamp();
+      if (result.image) embed.setThumbnail(result.image);
+      addXP(userId, 50);
+      const godChestRow = result.desc.includes("GOD CHEST") ? new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("llama_open_godchest").setLabel("🌟 Open God Chest!").setStyle(ButtonStyle.Success)) : null;
+      await interaction.editReply({ embeds: [embed], ...(godChestRow ? { components: [godChestRow] } : {}) });
+      if (godChestRow) {
+        const gcMsg = await interaction.fetchReply();
+        const gcCol = gcMsg.createMessageComponentCollector({ time: 60000 });
+        gcCol.on("collect", async (btn) => {
+          if (btn.user.id !== userId) return btn.reply({ content: "❌ Not your chest!", ephemeral: true });
+          await openGodChestInteraction(btn, userId); gcCol.stop();
+        });
+        gcCol.on("end", async () => { await interaction.editReply({ components: [] }).catch(() => {}); });
+      }
+    },
+  },
+
+  // ── /fish ─────────────────────────────────────
+  {
+    data: new SlashCommandBuilder().setName("fish").setDescription("Grab your fishing rod and head to a named location! 15-minute cooldown").addStringOption((o) => o.setName("location").setDescription("Where to fish").setRequired(false).addChoices(...FISH_SPOTS.slice(0,10).map((s) => ({ name: s, value: s })))),
+    async execute(interaction) {
+      await interaction.deferReply();
+      const userId = interaction.user.id; resetQuestsIfNeeded(userId); addInteraction(userId);
+      const user = getUser(userId), now = Date.now(), cooldown = 15*60*1000;
+      if (now - (user.lastFish??0) < cooldown) {
+        const left = cooldown - (now - (user.lastFish??0)), m = Math.floor(left/60000), s = Math.floor((left%60000)/1000);
+        await interaction.editReply({ embeds: [new EmbedBuilder().setTitle("🎣 Still Fishing...").setDescription(`You just went fishing! Wait **${m}m ${s}s** before going again.\n\n*The fish need time to respawn!*`).setColor(0x888888).setTimestamp()] }); return;
+      }
+      const spot = interaction.options.getString("location") ?? FISH_SPOTS[Math.floor(Math.random()*FISH_SPOTS.length)];
+      await interaction.editReply({ embeds: [new EmbedBuilder().setTitle(`🎣 Fishing at ${spot}...`).setDescription("You cast your line into the water...\n\n*Waiting for a bite...*").setColor(0x0075e3).setTimestamp()] });
+      await new Promise((r) => setTimeout(r, 1500 + Math.random()*2500));
+      const catch_ = weightedFish();
+      const resultDesc = catch_.action(userId);
+      updateUser(userId, { lastFish: now, fishCaught: (user.fishCaught??0)+1 });
+      addXP(userId, 60);
+      checkAndAwardAchievements(userId);
+      if (catch_.name === "Mythic Goldfish") awardAchievement(userId, "goldfish");
+      await interaction.editReply({ embeds: [new EmbedBuilder().setTitle(`${catch_.emoji} You caught a ${catch_.name}!`).setDescription(`Fishing at **${spot}**...\n\n${resultDesc}!\n\n+60 XP earned!`).setColor(catch_.name === "Junk" ? 0x888888 : catch_.name === "Mythic Goldfish" ? 0xffd700 : 0x0075e3).setFooter({ text: "Next fishing trip in 15 minutes" }).setTimestamp()] });
+    },
+  },
+
+  // ── /battlepass ───────────────────────────────
+  {
+    data: new SlashCommandBuilder().setName("battlepass").setDescription("View your Battle Pass progress and tier rewards"),
+    async execute(interaction) {
+      const userId = interaction.user.id; resetQuestsIfNeeded(userId); addInteraction(userId);
+      const user = getUser(userId);
+      const tier = getBattlePassTier(user.level, user.xp);
+      const nextReward = BP_REWARDS.find((r) => r.tier > tier);
+      const bar = "█".repeat(Math.round((tier/100)*20)) + "░".repeat(20 - Math.round((tier/100)*20));
+      const rewardLines = BP_REWARDS.map((r) => `${tier >= r.tier ? "✅" : "🔒"} **Tier ${r.tier}:** ${r.reward}`);
+      await interaction.reply({ embeds: [new EmbedBuilder().setTitle(`🎮 ${interaction.user.username}'s Battle Pass`).setDescription(`**Tier:** ${tier}/100\n\`${bar}\`\n\n${nextReward ? `**Next reward at Tier ${nextReward.tier}:** ${nextReward.reward}\n*Earn XP to level up your Battle Pass tier!*` : "🏆 **BATTLE PASS COMPLETE!**"}\n\n**All Rewards:**\n${rewardLines.join("\n")}`).setColor(tier >= 100 ? 0xffd700 : tier >= 50 ? 0x9b4dca : 0x00d4ff).setThumbnail(interaction.user.displayAvatarURL()).setFooter({ text: "Tier increases with bot level & XP" }).setTimestamp()] });
+      if (tier >= 100) checkAndAwardAchievements(userId);
+    },
+  },
+
+  // ── /stormwatch ───────────────────────────────
+  {
+    data: new SlashCommandBuilder().setName("stormwatch").setDescription("Check the storm — you might be safe, or you might be in it! 10-minute cooldown"),
+    async execute(interaction) {
+      await interaction.deferReply();
+      const userId = interaction.user.id; resetQuestsIfNeeded(userId); addInteraction(userId);
+      const user = getUser(userId), now = Date.now(), cooldown = 10*60*1000;
+      if (now - (user.lastStorm??0) < cooldown) {
+        const left = cooldown - (now - (user.lastStorm??0)), m = Math.floor(left/60000), s = Math.floor((left%60000)/1000);
+        await interaction.editReply({ embeds: [new EmbedBuilder().setTitle("🌪️ Storm Already Checked").setDescription(`You already checked the storm recently.\n\nWait **${m}m ${s}s** before checking again.`).setColor(0x888888).setTimestamp()] }); return;
+      }
+      await interaction.editReply({ embeds: [new EmbedBuilder().setTitle("🌪️ Checking Storm Position...").setDescription("Pulling up the storm map...\n\n*Triangulating your position...*").setColor(0x888888).setTimestamp()] });
+      await new Promise((r) => setTimeout(r, 1500));
+      const event = rollStorm();
+      const result = event.fn(userId);
+      updateUser(userId, { lastStorm: now });
+      if (event.name.includes("Safe") || event.name.includes("Eye")) { updateUser(userId, { stormsSurvived: (user.stormsSurvived??0)+1 }); checkAndAwardAchievements(userId); }
+      const pos = FORTNITE_POIS[Math.floor(Math.random()*FORTNITE_POIS.length)];
+      await interaction.editReply({ embeds: [new EmbedBuilder().setTitle(`🌪️ Storm Report — ${event.name}`).setDescription(`📍 **Your location:** ${pos}\n\n${result}!\n\n⏰ **Next circle closes in:** ${Math.floor(Math.random()*3)+1}m 30s`).setColor(event.color).setFooter({ text: "Next storm check in 10 minutes" }).setTimestamp()] });
+    },
+  },
+
+  // ── /supply_drop ──────────────────────────────
+  {
+    data: new SlashCommandBuilder().setName("supply_drop").setDescription("Call in a Supply Drop from the Battle Bus! 30-minute cooldown"),
+    async execute(interaction) {
+      await interaction.deferReply();
+      const userId = interaction.user.id; resetQuestsIfNeeded(userId); addInteraction(userId);
+      const user = getUser(userId), now = Date.now(), cooldown = 30*60*1000;
+      if (now - (user.lastSupplyDrop??0) < cooldown) {
+        const left = cooldown - (now - (user.lastSupplyDrop??0)), m = Math.floor(left/60000), s = Math.floor((left%60000)/1000);
+        await interaction.editReply({ embeds: [new EmbedBuilder().setTitle("📦 Supply Drop On Cooldown").setDescription(`A drop was already called. Next one in:\n\n⏳ **${m}m ${s}s**`).setColor(0x888888).setTimestamp()] }); return;
+      }
+      const location = FORTNITE_POIS[Math.floor(Math.random()*FORTNITE_POIS.length)];
+      await interaction.editReply({ embeds: [new EmbedBuilder().setTitle("📦 Supply Drop Incoming!").setDescription(`A Supply Drop was spotted over **${location}**!\n\n*Balloon descending...*`).setColor(0x0075e3).setImage(SUPPLY_IMAGE).setTimestamp()] });
+      await new Promise((r) => setTimeout(r, 2000 + Math.random()*2000));
+      updateUser(userId, { lastSupplyDrop: now, supplyDrops: (user.supplyDrops??0)+1 });
+      const luck = user.activeLuck;
+      const DROP_TABLE = [
+        { weight: 25, fn: () => { addVbucks(userId, 300); return "💰 **300 V-Bucks**"; } },
+        { weight: 20, fn: () => { addVbucks(userId, 750); return "💰 **750 V-Bucks**"; } },
+        { weight: 20, fn: () => { const w = randomWeapon(); updateUser(userId, { weapons: [...(getUser(userId).weapons??[]), w.name, w.name] }); return `${w.emoji} **${w.name} × 2 ammo**`; } },
+        { weight: 15, fn: () => { updateUser(userId, { luckPotion: (getUser(userId).luckPotion??0)+1 }); return "🍀 **Luck Potion**"; } },
+        { weight: 10, fn: () => { updateUser(userId, { boxes: (getUser(userId).boxes??0)+1 }); return "📬 **STW Box**"; } },
+        { weight: boostedChance(5, luck), fn: () => { updateUser(userId, { xtraLuckPotion: (getUser(userId).xtraLuckPotion??0)+1 }); return "🔮 **Xtra Luck Potion!**"; } },
+        { weight: boostedChance(3, luck), fn: async () => { const skin = await getRandomSkin(); addSkinToInventory(userId, skin.id, skin.name); return `${getRarityEmoji(skin.rarity)} **${skin.name}** *(skin!)*`; } },
+      ];
+      const dtTotal = DROP_TABLE.reduce((a,b) => a+b.weight, 0); let dr = Math.random()*dtTotal; let chosenDrop = DROP_TABLE[0];
+      for (const d of DROP_TABLE) { dr -= d.weight; if (dr <= 0) { chosenDrop = d; break; } }
+      const dropResult = await chosenDrop.fn();
+      addXP(userId, 75); checkAndAwardAchievements(userId);
+      await interaction.editReply({ embeds: [new EmbedBuilder().setTitle("📦 Supply Drop Landed!").setDescription(`The drop landed in **${location}** — you reached it first!\n\nInside the crate:\n\n${dropResult}!\n\n+75 XP earned!`).setColor(0x0075e3).setImage(SUPPLY_IMAGE).setFooter({ text: "Next supply drop in 30 minutes" }).setTimestamp()] });
+    },
+  },
+
+  // ── /build ────────────────────────────────────
+  {
+    data: new SlashCommandBuilder().setName("build").setDescription("Build a structure for protection").addStringOption((o) => o.setName("material").setDescription("Building material").setRequired(true).addChoices({ name: "🪵 Wood — 50 V-Bucks (1 hit)", value: "wood" }, { name: "🧱 Brick — 125 V-Bucks (2 hits)", value: "brick" }, { name: "⚙️ Metal — 250 V-Bucks (3 hits)", value: "metal" })),
+    async execute(interaction) {
+      const userId = interaction.user.id; resetQuestsIfNeeded(userId); addInteraction(userId);
+      const material = interaction.options.getString("material"), mat = BUILD_MATS[material];
+      const user = getUser(userId);
+      if (!user.infiniteVbucks && user.vbucks < mat.cost) { await interaction.reply({ content: `❌ Need **${mat.cost} V-Bucks** to build with **${mat.label}**. You have **${user.vbucks.toLocaleString()}**.` }); return; }
+      if (!user.infiniteVbucks) addVbucks(userId, -mat.cost);
+      updateUser(userId, { buildCharges: mat.charges, buildMaterial: material, timesBuilt: (user.timesBuilt??0)+1 });
+      addXP(userId, 30); checkAndAwardAchievements(userId);
+      await interaction.reply({ embeds: [new EmbedBuilder().setTitle(`🏗️ Structure Built — ${mat.label}!`).setDescription(`You built a **${mat.label}** structure!\n\n${mat.desc}\n\n💳 **V-Bucks spent:** ${mat.cost.toLocaleString()}\n🏗️ **Charges:** ${mat.charges}`).setColor(material === "wood" ? 0x8b4513 : material === "brick" ? 0xb05020 : 0x708090).setTimestamp()] });
+    },
+  },
+
+  // ── /medkit ───────────────────────────────────
+  {
+    data: new SlashCommandBuilder().setName("medkit").setDescription("Use a medkit to cut your elimination time in half (costs 100 V-Bucks)"),
+    async execute(interaction) {
+      const userId = interaction.user.id; resetQuestsIfNeeded(userId); addInteraction(userId);
+      const user = getUser(userId);
+      if (!isEliminated(userId)) { await interaction.reply({ embeds: [new EmbedBuilder().setTitle("✅ You're Not Eliminated!").setDescription("You don't need a medkit — you're alive!").setColor(0x00ff00).setTimestamp()] }); return; }
+      if (!user.infiniteVbucks && user.vbucks < 100) { await interaction.reply({ content: `❌ Need **100 V-Bucks** for a medkit.` }); return; }
+      const timeLeft = getEliminationTimeLeft(userId), newTime = Math.floor(timeLeft/2), newElimUntil = Date.now() + newTime;
+      if (!user.infiniteVbucks) addVbucks(userId, -100);
+      updateUser(userId, { eliminatedUntil: newElimUntil }); addXP(userId, 25);
+      await interaction.reply({ embeds: [new EmbedBuilder().setTitle("💊 Medkit Used!").setDescription(`Your elimination time was cut in half.\n\n⏳ **Time remaining:** ${Math.ceil(newTime/60000)} min(s)\n💳 **V-Bucks spent:** 100`).setColor(0x2ecc71).setTimestamp()] });
+    },
+  },
+
+  // ── /spy ──────────────────────────────────────
+  {
+    data: new SlashCommandBuilder().setName("spy").setDescription("Spy on another player to see their public bot stats").addUserOption((o) => o.setName("player").setDescription("Player to spy on").setRequired(true)),
+    async execute(interaction) {
+      const userId = interaction.user.id; resetQuestsIfNeeded(userId); addInteraction(userId);
+      const target = interaction.options.getUser("player", true);
+      if (target.bot) { await interaction.reply({ content: "❌ Can't spy on a bot." }); return; }
+      const targetData = getUser(target.id), tier = getBattlePassTier(targetData.level, targetData.xp);
+      const eliminated = isEliminated(target.id), timeLeft = eliminated ? Math.ceil(getEliminationTimeLeft(target.id)/60000) : 0;
+      const matInfo = targetData.buildCharges > 0 ? `${BUILD_MATS[targetData.buildMaterial]?.label ?? "🪵 Wood"} (${targetData.buildCharges} charge${targetData.buildCharges !== 1 ? "s" : ""})` : "None";
+      const spyActions = ["hacked a satellite dish","bribed a llama","intercepted their signals","found their trophy case","checked their Fortnite locker"];
+      const spyFlavor = spyActions[Math.floor(Math.random()*spyActions.length)];
+      await interaction.reply({ embeds: [new EmbedBuilder().setTitle(`🕵️ Intel Report — ${target.username}`).setDescription(`*You ${spyFlavor}*\n\n📊 **Level:** ${targetData.level}\n🎮 **Battle Pass Tier:** ${tier}/100\n🎒 **Skins:** ${targetData.inventory.length}\n💰 **V-Bucks (approx):** ~${Math.floor(targetData.vbucks/500)*500}+\n🔥 **Daily Streak:** ${targetData.dailyStreak??0} days\n🏗️ **Build:** ${matInfo}\n🪙 **Coin Flip Wins:** ${targetData.coinflipsWon??0}\n${eliminated ? `\n☠️ **Status:** ELIMINATED (${timeLeft} min left)` : "\n✅ **Status:** Active"}`).setColor(0x2c2c2c).setThumbnail(target.displayAvatarURL()).setTimestamp()] });
+    },
+  },
+
+  // ── /duel ─────────────────────────────────────
+  {
+    data: new SlashCommandBuilder().setName("duel").setDescription("Challenge someone to a 1v1 skin or V-Bucks duel!").addUserOption((o) => o.setName("player").setDescription("Player to duel").setRequired(true)).addStringOption((o) => o.setName("wager").setDescription("What to wager").setRequired(false).addChoices({ name: "💰 V-Bucks (500)", value: "vbucks" }, { name: "🎮 A Skin from inventory", value: "skin" })),
+    async execute(interaction) {
+      await interaction.deferReply();
+      const userId = interaction.user.id, target = interaction.options.getUser("player", true);
+      const wagerType = interaction.options.getString("wager") ?? "vbucks";
+      if (target.id === userId) { await interaction.editReply({ content: "❌ Can't duel yourself!" }); return; }
+      if (target.bot) { await interaction.editReply({ content: "❌ Can't duel bots!" }); return; }
+      resetQuestsIfNeeded(userId); addInteraction(userId);
+      const challenger = getUser(userId), targetData = getUser(target.id);
+      updateUser(userId, { duelsPlayed: (challenger.duelsPlayed??0)+1 });
+      if (wagerType === "vbucks") {
+        const amount = 500;
+        if (!challenger.infiniteVbucks && challenger.vbucks < amount) { await interaction.editReply({ content: `❌ Need **${amount} V-Bucks** to duel.` }); return; }
+        if (!targetData.infiniteVbucks && targetData.vbucks < amount) { await interaction.editReply({ content: `❌ <@${target.id}> doesn't have enough V-Bucks.` }); return; }
+        const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`duel_accept_${userId}`).setLabel("⚔️ Accept").setStyle(ButtonStyle.Danger), new ButtonBuilder().setCustomId(`duel_decline_${userId}`).setLabel("🏳️ Decline").setStyle(ButtonStyle.Secondary));
+        const msg = await interaction.editReply({ content: `<@${target.id}>`, embeds: [new EmbedBuilder().setTitle("⚔️ Duel Challenge!").setDescription(`<@${userId}> challenged <@${target.id}> to a **1v1 duel!**\n\n💰 **Wager:** 500 V-Bucks each\n🏆 **Winner takes:** 1,000 V-Bucks\n\n<@${target.id}>, do you accept?`).setColor(0xff4444).setTimestamp()], components: [row] });
+        const collector = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 60000, filter: (b) => b.user.id === target.id });
+        collector.on("collect", async (btn) => {
+          if (btn.customId.includes("decline")) { await btn.update({ embeds: [new EmbedBuilder().setTitle("🏳️ Duel Declined").setDescription(`<@${target.id}> backed down!`).setColor(0x888888).setTimestamp()], components: [], content: "" }); collector.stop(); return; }
+          collector.stop("accepted");
+          await btn.update({ embeds: [new EmbedBuilder().setTitle("⚔️ Duel in Progress!").setDescription("```\n3...\n2...\n1...\nFIRE!\n```").setColor(0xff4444).setTimestamp()], components: [] });
+          await new Promise((r) => setTimeout(r, 2500));
+          const cLuck = LUCK_BOOST[challenger.activeLuck]??0, tLuck = LUCK_BOOST[targetData.activeLuck]??0;
+          const cScore = Math.random()*100+cLuck, tScore = Math.random()*100+tLuck;
+          const winnerId = cScore > tScore ? userId : target.id, loserId = winnerId === userId ? target.id : userId;
+          if (!getUser(loserId).infiniteVbucks) addVbucks(loserId, -amount);
+          addVbucks(winnerId, amount); addXP(winnerId, 150);
+          awardAchievement(winnerId, "duel_champion"); checkAndAwardAchievements(winnerId);
+          const moves = ["landed a perfect headshot","built a 90 and edited out","pump-sniped from 200m","hit every shot with the Stinger","RNG blessed them"];
+          await interaction.editReply({ embeds: [new EmbedBuilder().setTitle(`⚔️ Duel Over — <@${winnerId}> wins!`).setDescription(`**<@${winnerId}>** ${moves[Math.floor(Math.random()*moves.length)]} and eliminated **<@${loserId}>**!\n\n🏆 **+${amount} V-Bucks** to the winner!\n💸 **-${amount} V-Bucks** from the loser`).setColor(0xffd700).setTimestamp()], content: "" });
+        });
+        collector.on("end", (_, r) => { if (r === "time") interaction.editReply({ content: "⏰ Duel expired.", embeds: [], components: [] }).catch(() => {}); });
+      } else {
+        const challSkins = Object.entries(challenger.inventoryNames), targSkins = Object.entries(targetData.inventoryNames);
+        if (!challSkins.length) { await interaction.editReply({ content: "❌ You have no skins to wager." }); return; }
+        if (!targSkins.length) { await interaction.editReply({ content: `❌ <@${target.id}> has no skins to wager.` }); return; }
+        const challOpts = challSkins.slice(0,25).map(([k,n]) => new StringSelectMenuOptionBuilder().setLabel(n).setValue(k));
+        const msg = await interaction.editReply({ content: `<@${target.id}>`, embeds: [new EmbedBuilder().setTitle("⚔️ Skin Duel!").setDescription(`<@${userId}> challenged <@${target.id}> to a **skin duel**!\n\n<@${userId}>, pick a skin to wager first.`).setColor(0xff4444).setTimestamp()], components: [new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("duel_skin_challenger").setPlaceholder("Pick your skin...").addOptions(challOpts))] });
+        let challPick = null, targPick = null;
+        const collector2 = msg.createMessageComponentCollector({ time: 2*60*1000, filter: (i) => i.user.id === userId || i.user.id === target.id });
+        collector2.on("collect", async (i) => {
+          if (i.isStringSelectMenu() && i.customId === "duel_skin_challenger" && i.user.id === userId) {
+            challPick = { key: i.values[0], name: challenger.inventoryNames[i.values[0]] };
+            const targOpts = targSkins.slice(0,25).map(([k,n]) => new StringSelectMenuOptionBuilder().setLabel(n).setValue(k));
+            await i.update({ embeds: [new EmbedBuilder().setTitle("⚔️ Skin Duel!").setDescription(`<@${userId}> wagers **${challPick.name}**!\n\n<@${target.id}>, pick your skin:`).setColor(0xff4444).setTimestamp()], components: [new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("duel_skin_target").setPlaceholder("Pick your skin...").addOptions(targOpts))] }); return;
+          }
+          if (i.isStringSelectMenu() && i.customId === "duel_skin_target" && i.user.id === target.id) {
+            if (!challPick) { await i.reply({ content: "❌ Wait!", ephemeral: true }); return; }
+            targPick = { key: i.values[0], name: targetData.inventoryNames[i.values[0]] };
+            await i.update({ embeds: [new EmbedBuilder().setTitle("⚔️ Skin Duel — Ready?").setDescription(`**<@${userId}>** wagers: **${challPick.name}**\n**<@${target.id}>** wagers: **${targPick.name}**\n\nClick to fight!`).setColor(0xff4444).setTimestamp()], components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("sduel_confirm").setLabel("⚔️ Both Confirm — Fight!").setStyle(ButtonStyle.Danger))] }); return;
+          }
+          if (i.isButton() && i.customId === "sduel_confirm") {
+            collector2.stop("done");
+            await i.update({ embeds: [new EmbedBuilder().setTitle("⚔️ Duel in Progress!").setDescription("```\n3...\n2...\n1...\nFIRE!\n```").setColor(0xff4444).setTimestamp()], components: [] });
+            await new Promise((r) => setTimeout(r, 2000));
+            const cLuck2 = LUCK_BOOST[challenger.activeLuck]??0, tLuck2 = LUCK_BOOST[targetData.activeLuck]??0;
+            const cScore2 = Math.random()*100+cLuck2, tScore2 = Math.random()*100+tLuck2;
+            const winnerId = cScore2 > tScore2 ? userId : target.id, loserId = winnerId === userId ? target.id : userId;
+            const loserPick = loserId === userId ? challPick : targPick;
+            const loserData = getUser(loserId); const idx = loserData.inventory.indexOf(loserPick.key.replace(/_\d+$/,"")); if (idx !== -1) loserData.inventory.splice(idx, 1); delete loserData.inventoryNames[loserPick.key];
+            updateUser(loserId, { inventory: loserData.inventory, inventoryNames: loserData.inventoryNames });
+            addSkinToInventory(winnerId, loserPick.key.replace(/_\d+$/,""), loserPick.name);
+            awardAchievement(winnerId, "duel_champion"); checkAndAwardAchievements(winnerId);
+            await interaction.editReply({ embeds: [new EmbedBuilder().setTitle(`⚔️ Skin Duel — <@${winnerId}> wins!`).setDescription(`**<@${winnerId}>** outplayed **<@${loserId}>**!\n\n🏆 **<@${winnerId}>** receives **${loserPick.name}**!`).setColor(0xffd700).setTimestamp()], content: "" });
+          }
+        });
+        collector2.on("end", (_, r) => { if (r === "time") interaction.editReply({ content: "⏰ Duel expired.", embeds: [], components: [] }).catch(() => {}); });
+      }
+    },
+  },
+
+  // ── /leaderboard ──────────────────────────────
+  {
+    data: new SlashCommandBuilder().setName("leaderboard").setDescription("View top players ranked by skins, V-Bucks, or level"),
+    async execute(interaction) {
+      await interaction.deferReply();
+      let mode = "skins";
+      const buildLBEmbed = async (m) => {
+        const guild = interaction.guild, allUsers2 = getAllUsers();
+        const entries = await Promise.all(Object.entries(allUsers2).map(async ([uid, d]) => {
+          let name = `User ${uid.slice(-4)}`;
+          if (guild) { try { const mem = await guild.members.fetch(uid).catch(() => null); if (mem) name = mem.displayName; } catch {} }
+          return { uid, name, skins: d.inventory.length, vbucks: d.vbucks, level: d.level, xp: d.xp };
+        }));
+        const sorted = [...entries].sort((a,b) => m === "skins" ? b.skins-a.skins : m === "vbucks" ? b.vbucks-a.vbucks : b.xp-a.xp);
+        const medals = (r) => r === 1 ? "🥇" : r === 2 ? "🥈" : r === 3 ? "🥉" : `**${r}.**`;
+        const modeLabel = m === "skins" ? "🎮 Most Skins" : m === "vbucks" ? "💰 Most V-Bucks" : "⭐ Highest Level";
+        const lines2 = sorted.slice(0,10).map((p,i) => `${medals(i+1)} **${p.name}** — ${m === "skins" ? `${p.skins} skin(s)` : m === "vbucks" ? `${p.vbucks.toLocaleString()} V-Bucks` : `Level ${p.level} · ${p.xp.toLocaleString()} XP`}`);
+        return new EmbedBuilder().setTitle(`🏆 Leaderboard — ${modeLabel}`).setDescription(lines2.length ? lines2.join("\n") : "No players yet!").setColor(0xf4a01a).setTimestamp();
+      };
+      const buildLBRow = (m) => new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("lb_skins").setLabel("🎮 Most Skins").setStyle(m==="skins"?ButtonStyle.Primary:ButtonStyle.Secondary).setDisabled(m==="skins"), new ButtonBuilder().setCustomId("lb_vbucks").setLabel("💰 Most V-Bucks").setStyle(m==="vbucks"?ButtonStyle.Primary:ButtonStyle.Secondary).setDisabled(m==="vbucks"), new ButtonBuilder().setCustomId("lb_level").setLabel("⭐ Highest Level").setStyle(m==="level"?ButtonStyle.Primary:ButtonStyle.Secondary).setDisabled(m==="level"));
+      const embed = await buildLBEmbed(mode);
+      const msg = await interaction.editReply({ embeds: [embed], components: [buildLBRow(mode)] });
+      const collector = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 5*60*1000 });
+      collector.on("collect", async (btn) => {
+        if (btn.customId === "lb_skins") mode = "skins"; else if (btn.customId === "lb_vbucks") mode = "vbucks"; else mode = "level";
+        await btn.update({ embeds: [await buildLBEmbed(mode)], components: [buildLBRow(mode)] });
+      });
+      collector.on("end", async () => { await interaction.editReply({ embeds: [await buildLBEmbed(mode)], components: [] }).catch(() => {}); });
+    },
+  },
+
+  // ── /daily ────────────────────────────────────
+  {
+    data: new SlashCommandBuilder().setName("daily").setDescription("Claim your daily V-Bucks reward — streaks add bonus V-Bucks!"),
+    async execute(interaction) {
+      const userId = interaction.user.id; resetQuestsIfNeeded(userId); addInteraction(userId);
+      const user = getUser(userId), now = Date.now(), last = user.lastDailyClaim??0, since = now - last;
+      if (since < 24*60*60*1000) {
+        const left = 24*60*60*1000 - since, h = Math.floor(left/3600000), m = Math.floor((left%3600000)/60000);
+        await interaction.reply({ embeds: [new EmbedBuilder().setTitle("⏰ Already Claimed!").setDescription(`Already claimed today.\n\n⏳ **Next claim in:** ${h}h ${m}m\n🔥 **Streak:** ${user.dailyStreak} day(s)`).setColor(0xff6600).setTimestamp()] }); return;
+      }
+      const newStreak = last === 0 || since >= 48*60*60*1000 ? 1 : (user.dailyStreak??0)+1;
+      const reward = 150 + (newStreak-1)*100;
+      const streakBroken = last !== 0 && since >= 48*60*60*1000 && (user.dailyStreak??0) > 1;
+      addVbucks(userId, reward); addXP(userId, 75);
+      updateUser(userId, { lastDailyClaim: now, dailyStreak: newStreak });
+      const updated = getUser(userId);
+      await interaction.reply({ embeds: [new EmbedBuilder().setTitle("🎁 Daily Reward Claimed!").setDescription(`${streakBroken ? "⚠️ **Streak reset!**\n\n" : newStreak > 1 ? `🎉 **${newStreak}-day streak!**\n\n` : ""}💰 **+${reward} V-Bucks**!\n💳 **Balance:** ${updated.infiniteVbucks ? "∞" : updated.vbucks.toLocaleString()} V-Bucks\n\n🔥 **Streak:** ${newStreak} day(s)`).setColor(newStreak >= 7 ? 0xf4a01a : newStreak >= 3 ? 0x9b4dca : 0x00d4ff).setThumbnail(interaction.user.displayAvatarURL()).setFooter({ text: "+75 XP bonus!" }).setTimestamp()] });
+      checkAndAwardAchievements(userId);
+    },
+  },
+
+  // ── /achievements ─────────────────────────────
+  {
+    data: new SlashCommandBuilder().setName("achievements").setDescription("View your achievements"),
+    async execute(interaction) {
+      const userId = interaction.user.id; resetQuestsIfNeeded(userId); addInteraction(userId);
+      const user = getUser(userId), earned = new Set(user.achievementsEarned??[]);
+      let page = 0; const PAGE_SIZE = 8;
+      const buildAchPage = (p) => {
+        const total = ALL_ACHIEVEMENTS.length, totalPages = Math.max(1, Math.ceil(total/PAGE_SIZE)), safePage = Math.min(p, totalPages-1);
+        const slice = ALL_ACHIEVEMENTS.slice(safePage*PAGE_SIZE, safePage*PAGE_SIZE+PAGE_SIZE);
+        const lines = slice.map((a) => earned.has(a.id) ? `🏆 ${a.emoji} **${a.title}**\n   *${a.description}*` : `🔒 ~~${a.emoji} ${a.title}~~\n   ||${a.description}||`);
+        const bar = "█".repeat(Math.round((earned.size/total)*10)) + "░".repeat(10 - Math.round((earned.size/total)*10));
+        const embed = new EmbedBuilder().setTitle(`🏆 ${interaction.user.username}'s Achievements`).setDescription(`\`${bar}\` ${earned.size}/${total}\n\n${lines.join("\n\n")}`).setColor(earned.size === total ? 0xf4a01a : 0x00d4ff).setFooter({ text: `Page ${safePage+1} of ${totalPages}` }).setTimestamp();
+        const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`ach_prev`).setLabel("◀ Prev").setStyle(ButtonStyle.Secondary).setDisabled(safePage === 0), new ButtonBuilder().setCustomId(`ach_next`).setLabel("Next ▶").setStyle(ButtonStyle.Secondary).setDisabled(safePage >= totalPages-1));
+        return { embed, row, totalPages };
+      };
+      const { embed, row } = buildAchPage(0);
+      const msg = await interaction.reply({ embeds: [embed], components: [row], fetchReply: true });
+      const collector = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 5*60*1000, filter: (b) => b.user.id === userId });
+      collector.on("collect", async (btn) => {
+        const { totalPages } = buildAchPage(page);
+        if (btn.customId === "ach_prev") page = Math.max(0, page-1); else page = Math.min(totalPages-1, page+1);
+        const { embed: _ae, row: _ar } = buildAchPage(page); await btn.update({ embeds: [_ae], components: [_ar] });
+      });
+      collector.on("end", async () => { const { embed: e } = buildAchPage(page); await interaction.editReply({ embeds: [e], components: [] }).catch(() => {}); });
+    },
+  },
+
+  // ── /musicpass ────────────────────────────────
+  {
+    data: new SlashCommandBuilder().setName("musicpass").setDescription("Purchase today's Music Pass — 1 exclusive Icon Series skin! Refreshes every 24 hours"),
+    async execute(interaction) {
+      await interaction.deferReply();
+      const userId = interaction.user.id;
+      resetQuestsIfNeeded(userId); addInteraction(userId);
+      const skin = await getMusicPass();
+      if (!skin) { await interaction.editReply({ content: "❌ No Icon Series skins available right now. Try again later!" }); return; }
+      const mpData = getMusicPassData();
+      const alreadyPurchased = isMusicPassPurchaser(userId);
+      const msLeft = Math.max(0, MUSIC_PASS_RESET_MS - (Date.now() - mpData.lastReset));
+      const rh = Math.floor(msLeft/3600000), rm = Math.floor((msLeft%3600000)/60000);
+      if (alreadyPurchased) {
+        await interaction.editReply({ embeds: [new EmbedBuilder().setTitle("🎵 Music Pass — Already Purchased").setDescription(`You already purchased today's Music Pass!\n\n🩵 **Today's skin:** ${getRarityEmoji(skin.rarity)} **${skin.name}**\n✨ Rarity: **${skin.rarity}**\n\n⏳ **Next refresh in:** ${rh}h ${rm}m`).setColor(getRarityColor(skin.rarity)).setTimestamp()] }); return;
+      }
+      const user = getUser(userId);
+      const embed = new EmbedBuilder()
+        .setTitle("🎵 Music Pass")
+        .setDescription(`Today's Music Pass features an exclusive **Icon Series** skin:\n\n${getRarityEmoji(skin.rarity)} **${skin.name}**\n✨ Rarity: **${skin.rarity}**\n*${skin.description}*\n\n💰 **Cost: 1,000 V-Bucks**\n💳 **Your balance:** ${user.infiniteVbucks ? "∞" : user.vbucks.toLocaleString()} V-Bucks\n\n🔄 **Refreshes in:** ${rh}h ${rm}m`)
+        .setColor(getRarityColor(skin.rarity))
+        .setFooter({ text: "Music Pass • 1 Icon Series skin • Refreshes every 24 hours" })
+        .setTimestamp();
+      if (skin.imageUrl) embed.setImage(skin.imageUrl);
+      const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("musicpass_buy").setLabel("🎵 Purchase — 1,000 V-Bucks").setStyle(ButtonStyle.Success));
+      const msg = await interaction.editReply({ embeds: [embed], components: [row] });
+      const collector = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 2*60*1000, filter: (b) => b.user.id === userId });
+      collector.on("collect", async (btn) => {
+        const freshUser = getUser(userId);
+        if (isMusicPassPurchaser(userId)) { await btn.reply({ content: "❌ You already purchased today's Music Pass!", ephemeral: true }); return; }
+        if (!freshUser.infiniteVbucks && freshUser.vbucks < MUSIC_PASS_COST) { await btn.reply({ content: `❌ Need **1,000 V-Bucks** but you only have **${freshUser.vbucks.toLocaleString()}**.`, ephemeral: true }); return; }
+        if (!freshUser.infiniteVbucks) addVbucks(userId, -MUSIC_PASS_COST);
+        addSkinToInventory(userId, skin.id + "_musicpass_" + Date.now(), skin.name + " 🎵");
+        addMusicPassPurchaser(userId);
+        const updated = getUser(userId);
+        collector.stop("purchased");
+        await btn.update({ embeds: [new EmbedBuilder().setTitle("🎵 Music Pass Purchased!").setDescription(`${getRarityEmoji(skin.rarity)} **${skin.name}** has been added to your locker!\n\n💰 **Spent:** 1,000 V-Bucks\n💳 **Remaining:** ${updated.infiniteVbucks ? "∞" : updated.vbucks.toLocaleString()} V-Bucks\n\n🔄 Come back in **${rh}h ${rm}m** for the next Music Pass!`).setColor(getRarityColor(skin.rarity)).setTimestamp()], components: [] });
+      });
+      collector.on("end", (_, r) => { if (r === "time") interaction.editReply({ embeds: [embed], components: [] }).catch(() => {}); });
+    },
+  },
+
+  // ── /crew ─────────────────────────────────────
+  // Crew can ONLY be obtained through the spawn channel.
+  {
+    data: new SlashCommandBuilder().setName("crew").setDescription("Learn about the Fortnite Crew Pack"),
+    async execute(interaction) {
+      await interaction.deferReply();
+      resetQuestsIfNeeded(interaction.user.id); addInteraction(interaction.user.id);
+      const channelId = getSpawnChannel(interaction.guildId ?? "");
+      await interaction.editReply({ embeds: [new EmbedBuilder()
+        .setTitle("👑 Fortnite Crew")
+        .setDescription("**You cannot purchase Crew with real money on a Discord bot.**\n\n> Discord bots don't support payment processors or real currency.\n\n**How to get Crew:**\n\nKeep an eye on the spawn channel — a **\uD83D\uDC51 Crew Pack** will occasionally spawn!\n\nWhen it appears, click **Redeem Crew Code** to claim:\n\n\uD83D\uDCB0 **1,000 V-Bucks**\n\uD83C\uDFB5 **Music Pass** *(24 hours)*\n\uD83C\uDFAE **Exclusive Crew Series skin**\n\n" + (channelId ? "\uD83D\uDC40 Watch <#" + channelId + "> for the next spawn!" : "\u2699\uFE0F Ask an admin to set up a spawn channel with `/setup`."))
+        .setColor(0x4169e1)
+        .setFooter({ text: "👑 Crew is earned, not bought — watch for spawns!" })
+        .setTimestamp()] });
+    },
+  },
+];
+
+// ─────────────────────────────────────────────
+//  Command registration + Discord client
+// ─────────────────────────────────────────────
+const commandMap = new Map(commands.map((c) => [c.data.name, c]));
+
+async function registerCommands(token, clientId) {
+  try {
+    const rest = new REST({ version: "10" }).setToken(token);
+    const body = commands.map((c) => c.data.toJSON());
+    const guildIdsRaw = process.env.GUILD_IDS;
+    if (guildIdsRaw) {
+      const guildIds = guildIdsRaw.split(",").map(id => id.trim()).filter(Boolean);
+      for (const guildId of guildIds) {
+        await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: [] });
+        await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body });
+        console.log(`✅ Registered ${body.length} commands for guild ${guildId}`);
+      }
+    } else {
+      await rest.put(Routes.applicationCommands(clientId), { body });
+      console.log(`✅ Registered ${body.length} global commands`);
+    }
+  } catch (err) {
+    console.error("❌ Registration failed:", err);
+  }
+}
+
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
+});
+
+client.once("ready", async () => {
+  console.log(`✅ Logged in as ${client.user.tag}`);
+  const token = process.env.DISCORD_TOKEN || process.env.DISCORD_BOT_TOKEN;
+  const clientId = process.env.DISCORD_CLIENT_ID || client.user.id;
+  await registerCommands(token, clientId);
+  try { await fetchFortniteSkins(); console.log("✅ Fortnite skins loaded"); } catch (err) { console.warn("⚠️ Could not pre-load skins:", err.message); }
+  initSpawner(client);
+  console.log("✅ Bot ready — SQLite database active");
+});
+
+client.on("interactionCreate", async (interaction) => {
+  try {
+    if (interaction.isAutocomplete()) { const cmd = commandMap.get(interaction.commandName); if (cmd?.autocomplete) await cmd.autocomplete(interaction); return; }
+    if (!interaction.isChatInputCommand()) return;
+    const cmd = commandMap.get(interaction.commandName);
+    if (!cmd) return;
+    await cmd.execute(interaction);
+  } catch (err) {
+    console.error(`Command error [${interaction.commandName}]:`, err);
+    const msg = { content: "❌ Something went wrong!", ephemeral: true };
+    if (interaction.replied || interaction.deferred) await interaction.followUp(msg).catch(() => {});
+    else await interaction.reply(msg).catch(() => {});
+  }
+});
+
+client.on("messageCreate", async (message) => {
+  if (message.author.bot) return;
+  if (message.content.trim().toLowerCase() === "buy") await handleBuyMessage(message).catch(console.error);
+});
+
+client.on("error", (err) => console.error("Discord client error:", err));
+
+const token = process.env.DISCORD_TOKEN || process.env.DISCORD_BOT_TOKEN;
+if (token) client.login(token).catch((err) => console.error("❌ Discord login failed:", err.message));
+else console.warn("⚠️ No DISCORD_TOKEN — Express server running but bot is offline.");
+
+process.on("SIGTERM", () => { client.destroy(); process.exit(0); });
