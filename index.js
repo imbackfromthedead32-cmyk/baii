@@ -2023,15 +2023,6 @@ if (token) client.login(token).catch((err) => console.error("❌ Discord login f
 else console.warn("⚠️ No DISCORD_TOKEN — Express server running but bot is offline.");
 
 process.on("SIGTERM", () => { client.destroy(); process.exit(0); });
-const MULTI_AMMO_TYPES = new Set(["smg", "ar"]);
-function isMultiAmmoWeapon(w) { return MULTI_AMMO_TYPES.has(w.type); }
-function getWeaponByName(name) {
-  const q = name.toLowerCase().trim();
-  return FORTNITE_WEAPONS.find((w) => w.name.toLowerCase() === q || w.id === q || w.name.toLowerCase().includes(q));
-}
-function randomWeapon() { return FORTNITE_WEAPONS[Math.floor(Math.random() * FORTNITE_WEAPONS.length)]; }
-
-const RARITY_WEIGHTS = { legendary: 5, epic: 10, rare: 20, uncommon: 30, common: 35 };
 
 // Fishing spots + results
 const FISH_SPOTS = ["Pleasant Park", "Lazy Lake", "Tilted Towers", "Slurpy Swamp", "Misty Meadows", "Coral Castle", "Holly Hatchery", "Dirty Docks", "Steamy Stacks"];
