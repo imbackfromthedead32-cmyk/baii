@@ -1,4 +1,5 @@
 require("dotenv").config();
+const fs = require("fs");
 
 const {
   Client, GatewayIntentBits, SlashCommandBuilder, EmbedBuilder,
@@ -17,6 +18,47 @@ app.get("/check", (_req, res) => res.json({ status: "ok", timestamp: new Date().
 app.listen(PORT, () => console.log(`Express server on port ${PORT}`));
 
 // ─────────────────────────────────────────────
+//  Persistent Storage
+// ─────────────────────────────────────────────
+const DATA_FILE = "./data.json";
+
+function loadData() {
+  try {
+    if (fs.existsSync(DATA_FILE)) {
+      const raw = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
+      if (!raw.config) raw.config = { guildSpawnChannels: {} };
+      if (!raw.users) raw.users = {};
+      if (!raw.itemShop) raw.itemShop = { skins: [], lastReset: 0 };
+      if (!raw.coinflipChallenges) raw.coinflipChallenges = {};
+      if (!raw.musicPass) raw.musicPass = { skin: null, lastReset: 0 };
+      if (!raw.musicPassPurchasers) raw.musicPassPurchasers = {};
+      if (!raw.crewCodes) raw.crewCodes = {};
+      return raw;
+    }
+  } catch (e) {
+    console.error("Failed to load data.json:", e.message);
+  }
+  return {
+    config: { guildSpawnChannels: {} },
+    users: {},
+    itemShop: { skins: [], lastReset: 0 },
+    coinflipChallenges: {},
+    musicPass: { skin: null, lastReset: 0 },
+    musicPassPurchasers: {},
+    crewCodes: {},
+  };
+}
+
+let _saveTimeout = null;
+function saveData() {
+  if (_saveTimeout) clearTimeout(_saveTimeout);
+  _saveTimeout = setTimeout(() => {
+    try { fs.writeFileSync(DATA_FILE, JSON.stringify(_data)); }
+    catch (e) { console.error("Failed to save data.json:", e.message); }
+  }, 500);
+}
+
+// ─────────────────────────────────────────────
 //  Constants / Images
 // ─────────────────────────────────────────────
 const VBUCKS_IMAGE   = "https://fortnite-api.com/images/vbuck.png";
@@ -31,6 +73,7 @@ const BUS_IMAGE      = "https://static.wikia.nocookie.net/fortnite/images/7/70/B
 
 const SHOP_RESET_MS = 24 * 60 * 60 * 1000;
 const SKIN_PRICE    = 1500;
+const MUSIC_PASS_RESET_MS = 24 * 60 * 60 * 1000;
 
 // ─────────────────────────────────────────────
 //  Fortnite data
@@ -143,7 +186,7 @@ const VALID_CODES = {
 };
 
 // ─────────────────────────────────────────────
-//  In-memory storage
+//  In-memory storage (persisted to data.json)
 // ─────────────────────────────────────────────
 const DAILY_QUESTS = [
   { id: "catch_skins",    label: "Catch 3 spawned skins",            xpReward: 300, required: 3 },
@@ -207,7 +250,7 @@ function checkFoundersQuests(userId) {
   return { newBoxes, quests: updated };
 }
 
-const _data = { config: { guildSpawnChannels: {} }, users: {}, itemShop: { skins: [], lastReset: 0 }, coinflipChallenges: {} };
+const _data = loadData();
 
 function getUser(userId) {
   if (!_data.users[userId]) _data.users[userId] = {
@@ -229,6 +272,7 @@ function getUser(userId) {
     duelsPlayed: 0, timesBuilt: 0,
     lastLlama: 0, lastSupplyDrop: 0, lastFish: 0, lastStorm: 0,
     buildCharges: 0, buildMaterial: "none",
+    hasMusicPass: false, musicPassExpiry: 0,
   };
   const u = _data.users[userId];
   const defaults = {
@@ -241,6 +285,7 @@ function getUser(userId) {
     duelsPlayed: 0, timesBuilt: 0,
     lastLlama: 0, lastSupplyDrop: 0, lastFish: 0, lastStorm: 0,
     buildCharges: 0, buildMaterial: "none",
+    hasMusicPass: false, musicPassExpiry: 0,
   };
   for (const [k, v] of Object.entries(defaults)) { if (u[k] === undefined) u[k] = v; }
   return u;
@@ -250,6 +295,7 @@ function updateUser(userId, update) {
   const user = getUser(userId);
   Object.assign(user, update);
   _data.users[userId] = user;
+  saveData();
 }
 
 function addInteraction(userId) {
@@ -257,6 +303,7 @@ function addInteraction(userId) {
   user.interactionCount += 1;
   const gained = user.interactionCount % 30 === 0;
   if (gained && !user.infiniteVbucks) user.vbucks += 250;
+  saveData();
   return { gainedVbucks: gained };
 }
 
@@ -264,12 +311,14 @@ function addVbucks(userId, amount) {
   const u = getUser(userId);
   if (u.infiniteVbucks && amount < 0) return;
   u.vbucks += amount;
+  saveData();
 }
 
 function addSkinToInventory(userId, skinId, skinName) {
   const u = getUser(userId);
   u.inventory.push(skinId);
   u.inventoryNames[skinId + "_" + u.inventory.length] = skinName;
+  saveData();
 }
 
 function xpForLevel(level) { return Math.min(100 * level, 450); }
@@ -289,6 +338,7 @@ function addXP(userId, amount) {
   const leveledUp = after.level > before.level;
   u.level = after.level;
   if (leveledUp) u.boxes += after.level - before.level;
+  saveData();
   return { leveledUp, newLevel: after.level };
 }
 
@@ -296,6 +346,7 @@ function resetQuestsIfNeeded(userId) {
   const u = getUser(userId);
   if (Date.now() - u.lastQuestReset > 24 * 60 * 60 * 1000) {
     u.quests = freshQuests(); u.lastQuestReset = Date.now();
+    saveData();
   }
 }
 
@@ -310,6 +361,7 @@ function progressQuest(userId, questId, amount = 1) {
     addXP(userId, quest.xpReward);
     u.foundersBoxes = (u.foundersBoxes ?? 0) + 1;
   }
+  saveData();
   return quest.completed ? quest : null;
 }
 
@@ -317,14 +369,14 @@ function isEliminated(userId) { return (getUser(userId).eliminatedUntil ?? 0) > 
 function getEliminationTimeLeft(userId) { return Math.max(0, (getUser(userId).eliminatedUntil ?? 0) - Date.now()); }
 function hasActiveFreeSkin(userId) { const u = getUser(userId); return (u.freeSkinExpiry ?? 0) > Date.now() && !(u.freeSkinRedeemed ?? false); }
 function getItemShop() { return _data.itemShop; }
-function setItemShop(skins) { _data.itemShop = { skins, lastReset: Date.now() }; }
+function setItemShop(skins) { _data.itemShop = { skins, lastReset: Date.now() }; saveData(); }
 function getSpawnChannel(guildId) { return _data.config.guildSpawnChannels[guildId]; }
-function setSpawnChannel(guildId, channelId) { _data.config.guildSpawnChannels[guildId] = channelId; }
+function setSpawnChannel(guildId, channelId) { _data.config.guildSpawnChannels[guildId] = channelId; saveData(); }
 function getAllGuildSpawnChannels() { return _data.config.guildSpawnChannels; }
 function getAllUsers() { return _data.users; }
-function setCoinflipChallenge(id, ch) { _data.coinflipChallenges[id] = ch; }
+function setCoinflipChallenge(id, ch) { _data.coinflipChallenges[id] = ch; saveData(); }
 function getCoinflipChallenge(id) { return _data.coinflipChallenges[id]; }
-function deleteCoinflipChallenge(id) { delete _data.coinflipChallenges[id]; }
+function deleteCoinflipChallenge(id) { delete _data.coinflipChallenges[id]; saveData(); }
 
 // ─────────────────────────────────────────────
 //  Luck helpers
@@ -381,6 +433,7 @@ function checkAndAwardAchievements(userId) {
       newlyEarned.push(ach.title);
     }
   }
+  if (newlyEarned.length) saveData();
   return newlyEarned;
 }
 function awardAchievement(userId, achId) {
@@ -389,6 +442,7 @@ function awardAchievement(userId, achId) {
   const user = getUser(userId);
   if (user.achievementsEarned.includes(achId)) return null;
   user.achievementsEarned.push(achId);
+  saveData();
   return ach;
 }
 function buildAchievementEmbed(ach) {
@@ -573,11 +627,11 @@ async function findSkinByName(query) {
 }
 
 function getRarityColor(rarity) {
-  const c = { legendary: 0xf4a01a, epic: 0x9b4dca, rare: 0x0075e3, uncommon: 0x1a9b1a, common: 0x808080, marvel: 0xed1d24, icon: 0x00d4ff, shadow: 0x2c2c2c, slurp: 0x00e5ff, frozen: 0xa8d8ea, lava: 0xff4500, dark: 0x6a0dad };
+  const c = { legendary: 0xf4a01a, epic: 0x9b4dca, rare: 0x0075e3, uncommon: 0x1a9b1a, common: 0x808080, marvel: 0xed1d24, icon: 0x00d4ff, "icon series": 0x00d4ff, shadow: 0x2c2c2c, slurp: 0x00e5ff, frozen: 0xa8d8ea, lava: 0xff4500, dark: 0x6a0dad, crew: 0x4169e1, "crew series": 0x4169e1 };
   return c[rarity.toLowerCase()] ?? 0x808080;
 }
 function getRarityEmoji(rarity) {
-  const e = { legendary: "🟡", epic: "🟣", rare: "🔵", uncommon: "🟢", common: "⚪", marvel: "🔴", icon: "🩵" };
+  const e = { legendary: "🟡", epic: "🟣", rare: "🔵", uncommon: "🟢", common: "⚪", marvel: "🔴", icon: "🩵", "icon series": "🩵", crew: "👑", "crew series": "👑" };
   return e[rarity.toLowerCase()] ?? "⚪";
 }
 function getSpawnPercent(rarity) {
@@ -661,6 +715,51 @@ function rollFoundersBoxVbucks() {
   let r = Math.random() * total;
   for (const t of FOUNDERS_BOX_TIERS) { r -= t.weight; if (r <= 0) return t.amount; }
   return 100;
+}
+
+// ─────────────────────────────────────────────
+//  Music Pass helpers
+// ─────────────────────────────────────────────
+async function getIconSkins() {
+  const skins = await fetchFortniteSkins();
+  return skins.filter(s => {
+    const r = s.rarity.toLowerCase();
+    return r === "icon" || r === "icon series";
+  });
+}
+
+async function getMusicPass() {
+  if (_data.musicPass.skin && Date.now() - _data.musicPass.lastReset < MUSIC_PASS_RESET_MS) {
+    return _data.musicPass.skin;
+  }
+  const iconSkins = await getIconSkins();
+  const pool = iconSkins.length ? iconSkins : await fetchFortniteSkins();
+  const skin = pool[Math.floor(Math.random() * pool.length)];
+  _data.musicPass = { skin, lastReset: Date.now() };
+  _data.musicPassPurchasers = {};
+  saveData();
+  return skin;
+}
+
+// ─────────────────────────────────────────────
+//  Crew helpers
+// ─────────────────────────────────────────────
+async function getCrewSkin() {
+  const skins = await fetchFortniteSkins();
+  const crewSkins = skins.filter(s => {
+    const r = s.rarity.toLowerCase();
+    return r === "crew" || r === "crew series";
+  });
+  if (crewSkins.length) return { ...crewSkins[Math.floor(Math.random() * crewSkins.length)], rarity: "Crew Series" };
+  // Fallback: pick a random skin and relabel as Crew Series
+  const fallback = skins[Math.floor(Math.random() * skins.length)];
+  return { ...fallback, rarity: "Crew Series" };
+}
+
+function generateCrewCode() {
+  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+  const seg = () => Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+  return `${seg()}-${seg()}-${seg()}-${seg()}`;
 }
 
 // ─────────────────────────────────────────────
@@ -749,6 +848,63 @@ async function spawnLuckPotion(client, guildId, channelId, forced = false, type 
   } catch { return false; }
 }
 
+// ─────────────────────────────────────────────
+//  Crew Pack spawn (button-based, not buy-typed)
+// ─────────────────────────────────────────────
+async function spawnCrew(client, guildId, channelId) {
+  if (activeSpawns[guildId]) return false;
+  const channel = client.channels.cache.get(channelId);
+  if (!channel) return false;
+  try {
+    const code = generateCrewCode();
+    _data.crewCodes[code] = { generatedAt: Date.now(), used: false };
+    saveData();
+    const crewSkin = await getCrewSkin();
+    const embed = new EmbedBuilder()
+      .setTitle("👑 Fortnite Crew Pack Spawned!")
+      .setDescription(`An exclusive **Fortnite Crew Pack** has appeared!\n\n**Includes:**\n💰 **1,000 V-Bucks**\n🎵 **Free Music Pass** (30 days)\n🎮 **${crewSkin ? crewSkin.name : "Exclusive Crew Skin"}** *(Crew Series)*\n\n\`\`\`${code}\`\`\`\n\nClick **Redeem Crew Code** to claim and receive the code in your DMs!`)
+      .setColor(0x4169e1)
+      .setFooter({ text: "Crew Pack • First come, first served!" })
+      .setTimestamp();
+    if (crewSkin?.imageUrl) embed.setThumbnail(crewSkin.imageUrl);
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`crew_redeem_${code}`).setLabel("👑 Redeem Crew Code").setStyle(ButtonStyle.Primary)
+    );
+    const msg = await channel.send({ embeds: [embed], components: [row] });
+    activeSpawns[guildId] = { type: "crew", code, channelId, messageId: msg.id, claimedBy: null };
+    const collector = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 24 * 60 * 60 * 1000 });
+    collector.on("collect", async (btn) => {
+      if (!btn.customId.startsWith("crew_redeem_")) return;
+      const btnCode = btn.customId.replace("crew_redeem_", "");
+      const codeData = _data.crewCodes[btnCode];
+      if (!codeData || codeData.used) { await btn.reply({ content: "❌ This crew code has already been redeemed!", ephemeral: true }); return; }
+      codeData.used = true;
+      codeData.userId = btn.user.id;
+      saveData();
+      collector.stop("redeemed");
+      delete activeSpawns[guildId];
+      const rUserId = btn.user.id;
+      addVbucks(rUserId, 1000);
+      updateUser(rUserId, { hasMusicPass: true, musicPassExpiry: Date.now() + 30 * 24 * 60 * 60 * 1000 });
+      if (crewSkin) addSkinToInventory(rUserId, crewSkin.id + "_crew_" + Date.now(), crewSkin.name + " (Crew)");
+      const updated = getUser(rUserId);
+      try {
+        const dm = await btn.user.createDM();
+        await dm.send({ embeds: [new EmbedBuilder().setTitle("👑 Your Fortnite Crew Code").setDescription(`Welcome to the Crew!\n\n**Your Crew Code:**\n\`\`\`${btnCode}\`\`\`\n\n**Rewards received:**\n💰 +1,000 V-Bucks\n🎵 Music Pass (30 days)\n🎮 ${crewSkin ? crewSkin.name + " (Crew Series)" : "Crew Series Skin"}\n\n*Keep this code safe!*`).setColor(0x4169e1).setTimestamp()] });
+      } catch { /* DMs closed */ }
+      await btn.update({ embeds: [new EmbedBuilder().setTitle("👑 Crew Code Redeemed!").setDescription(`Welcome to the Crew, <@${rUserId}>!\n\n💰 **+1,000 V-Bucks** added!\n🎵 **Music Pass** activated (30 days)!\n🎮 **${crewSkin ? crewSkin.name : "Crew Skin"}** (Crew Series) added!\n\n💳 **Balance:** ${updated.infiniteVbucks ? "∞" : updated.vbucks.toLocaleString()} V-Bucks\n\n📬 **Your code was sent to your DMs!**`).setColor(0x4169e1).setTimestamp()], components: [] });
+      if (botClient) scheduleNextSpawn(botClient, guildId, channelId);
+    });
+    collector.on("end", (_, r) => {
+      if (r !== "redeemed") {
+        delete activeSpawns[guildId];
+        if (botClient) scheduleNextSpawn(botClient, guildId, channelId);
+      }
+    });
+    return true;
+  } catch { return false; }
+}
+
 async function handleBuyMessage(message) {
   const guildId = message.guildId;
   if (!guildId) return;
@@ -756,6 +912,8 @@ async function handleBuyMessage(message) {
   if (!channelId || message.channelId !== channelId) return;
   const spawn = activeSpawns[guildId];
   if (!spawn || spawn.claimedBy) return;
+  // Crew codes use button redemption, not text "buy"
+  if (spawn.type === "crew") return;
   const userId = message.author.id;
   if (isEliminated(userId)) {
     const m = Math.ceil(getEliminationTimeLeft(userId) / 60000);
@@ -853,7 +1011,7 @@ const commands = [
 
   // ── /forcespawn ─────────────────────────
   {
-    data: new SlashCommandBuilder().setName("forcespawn").setDescription("Force a spawn in the spawn channel").addStringOption((o) => o.setName("item").setDescription("What to spawn").setRequired(false).addChoices({ name: "Random Skin", value: "skin" }, { name: "V-Bucks Drop", value: "vbucks" }, { name: "STW Packs", value: "stw" }, { name: "Founders Pack", value: "founders_pack" }, { name: "Founders Box", value: "founders_box" }, { name: "Luck Potion", value: "luckPotion" }, { name: "Xtra Luck Potion", value: "xtraLuckPotion" })).addStringOption((o) => o.setName("skin_name").setDescription("Specific skin name").setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+    data: new SlashCommandBuilder().setName("forcespawn").setDescription("Force a spawn in the spawn channel").addStringOption((o) => o.setName("item").setDescription("What to spawn").setRequired(false).addChoices({ name: "Random Skin", value: "skin" }, { name: "V-Bucks Drop", value: "vbucks" }, { name: "STW Packs", value: "stw" }, { name: "Founders Pack", value: "founders_pack" }, { name: "Founders Box", value: "founders_box" }, { name: "Luck Potion", value: "luckPotion" }, { name: "Xtra Luck Potion", value: "xtraLuckPotion" }, { name: "👑 Crew Pack", value: "crew" })).addStringOption((o) => o.setName("skin_name").setDescription("Specific skin name").setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
     async execute(interaction) {
       const guildId = interaction.guildId;
       if (!guildId) return interaction.reply({ content: "❌ Server only.", ephemeral: true });
@@ -868,6 +1026,10 @@ const commands = [
         if (!match) { await interaction.editReply({ content: `❌ Couldn't find **"${skinName}"**.` }); return; }
         await interaction.editReply({ content: `🎮 Spawning **${match.name}** in <#${channelId}>...` });
         await spawnSkin(interaction.client, guildId, channelId, true, match); return;
+      }
+      if (item === "crew") {
+        await interaction.reply({ content: `👑 Spawning a **Crew Pack** in <#${channelId}>...`, ephemeral: true });
+        await spawnCrew(interaction.client, guildId, channelId); return;
       }
       const actions = { skin: () => spawnSkin(interaction.client, guildId, channelId, true), vbucks: () => spawnVbucks(interaction.client, guildId, channelId, true), stw: () => spawnStwPacks(interaction.client, guildId, channelId, true), founders_pack: () => spawnFoundersPack(interaction.client, guildId, channelId, true), founders_box: () => spawnFoundersBox(interaction.client, guildId, channelId, true), luckPotion: () => spawnLuckPotion(interaction.client, guildId, channelId, true, "luckPotion"), xtraLuckPotion: () => spawnLuckPotion(interaction.client, guildId, channelId, true, "xtraLuckPotion") };
       await interaction.reply({ content: `✅ Spawning in <#${channelId}>...`, ephemeral: true });
@@ -987,38 +1149,18 @@ const commands = [
       const skins = await ensureShopFresh(), user = getUser(userId);
       const options = skins.map((s, i) => new StringSelectMenuOptionBuilder().setLabel(`${s.name} — ${s.price.toLocaleString()} V-Bucks`).setDescription(`${getRarityEmoji(s.rarity)} ${s.rarity}`).setValue(String(i)));
       const row = new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("gift_select").setPlaceholder("Choose a skin to gift...").addOptions(options));
-      const msg = await interaction.editReply({ embeds: [new EmbedBuilder().setTitle(`🎁 Gift a Skin to ${target.username}`).setDescription(`Your balance: **${user.infiniteVbucks ? "∞" : user.vbucks.toLocaleString()} V-Bucks**\n\nSelect a skin:`).setColor(0xff69b4).setTimestamp()], components: [row] });
+      const msg = await interaction.editReply({ embeds: [new EmbedBuilder().setTitle(`🎁 Gift a Skin to ${target.username}`).setDescription(`Balance: **${user.vbucks.toLocaleString()} V-Bucks**\n\nSelect a skin to gift:`).setColor(0xffd700).setTimestamp()], components: [row] });
       const collector = msg.createMessageComponentCollector({ componentType: ComponentType.StringSelect, time: 60000, filter: (i) => i.user.id === userId });
       collector.on("collect", async (sel) => {
         const skin = skins[parseInt(sel.values[0])], freshUser = getUser(userId);
         if (!freshUser.infiniteVbucks && freshUser.vbucks < skin.price) { await sel.update({ content: `❌ Need **${skin.price.toLocaleString()} V-Bucks**.`, embeds: [], components: [] }); return; }
-        const targetUser = getUser(target.id);
-        if (targetUser.inventory.includes(skin.skinId)) {
-          const alreadyEmbed = new EmbedBuilder().setTitle("⚠️ They Already Own This Skin!").setDescription(`**${target.username}** already owns **${skin.name}**!\n\nSend them **1,500 V-Bucks** instead?`).setColor(0xffaa00).setTimestamp();
-          const confirmRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("gift_vb_yes").setLabel("✅ Yes — Send 1,500 V-Bucks").setStyle(ButtonStyle.Success), new ButtonBuilder().setCustomId("gift_vb_no").setLabel("❌ Cancel").setStyle(ButtonStyle.Danger));
-          await sel.update({ embeds: [alreadyEmbed], components: [confirmRow] }); collector.stop();
-          const btnMsg = await interaction.fetchReply();
-          const btnCol = btnMsg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 30000, filter: (b) => b.user.id === userId });
-          btnCol.on("collect", async (btn) => {
-            if (btn.customId === "gift_vb_yes") {
-              const latest = getUser(userId);
-              if (!latest.infiniteVbucks && latest.vbucks < 1500) { await btn.update({ content: "❌ Not enough V-Bucks!", embeds: [], components: [] }); return; }
-              if (!latest.infiniteVbucks) addVbucks(userId, -1500);
-              addVbucks(target.id, 1500);
-              const after = getUser(userId);
-              await btn.update({ embeds: [new EmbedBuilder().setTitle("💸 V-Bucks Transferred!").setDescription(`Sent **1,500 V-Bucks** to <@${target.id}>!\n💳 Remaining: ${after.infiniteVbucks ? "∞" : after.vbucks.toLocaleString()} V-Bucks`).setColor(0x00d4ff).setTimestamp()], components: [] });
-              if (interaction.channel?.send) await interaction.channel.send({ content: `<@${target.id}>`, embeds: [new EmbedBuilder().setTitle("💸 You received V-Bucks!").setDescription(`<@${userId}> sent you **1,500 V-Bucks**!`).setColor(0x00d4ff).setTimestamp()] });
-            } else await btn.update({ content: "❌ Gift cancelled.", embeds: [], components: [] });
-            btnCol.stop();
-          });
-          return;
-        }
         if (!freshUser.infiniteVbucks) addVbucks(userId, -skin.price);
         addSkinToInventory(target.id, skin.skinId, skin.name);
-        updateUser(userId, { giftsGiven: (freshUser.giftsGiven ?? 0) + 1 }); checkAndAwardAchievements(userId);
-        const senderAfter = getUser(userId);
-        await sel.update({ embeds: [new EmbedBuilder().setTitle("🎁 Gift Sent!").setDescription(`${getRarityEmoji(skin.rarity)} You gifted **${skin.name}** to <@${target.id}>!\n\n💰 Spent: ${skin.price.toLocaleString()} V-Bucks\n💳 Remaining: ${senderAfter.infiniteVbucks ? "∞" : senderAfter.vbucks.toLocaleString()} V-Bucks`).setColor(0xff69b4).setThumbnail(skin.imageUrl).setTimestamp()], components: [] });
-        if (interaction.channel?.send) await interaction.channel.send({ content: `<@${target.id}>`, embeds: [new EmbedBuilder().setTitle("🎁 You received a gift!").setDescription(`<@${userId}> sent you **${skin.name}**!\n\nCheck \`/inventory\`!`).setColor(getRarityColor(skin.rarity)).setImage(skin.imageUrl).setTimestamp()] });
+        updateUser(userId, { giftsGiven: (freshUser.giftsGiven ?? 0) + 1 });
+        checkAndAwardAchievements(userId);
+        const updated = getUser(userId);
+        await sel.update({ embeds: [new EmbedBuilder().setTitle("🎁 Gift Sent!").setDescription(`You gifted **${skin.name}** to <@${target.id}>!\n\n💰 Spent: ${skin.price.toLocaleString()} V-Bucks\n💳 Remaining: ${updated.infiniteVbucks ? "∞" : updated.vbucks.toLocaleString()} V-Bucks`).setColor(0xffd700).setThumbnail(skin.imageUrl).setTimestamp()], components: [] });
+        try { const dm = await target.createDM(); await dm.send({ embeds: [new EmbedBuilder().setTitle("🎁 You Received a Gift!").setDescription(`<@${userId}> gifted you **${skin.name}**!`).setColor(getRarityColor(skin.rarity)).setThumbnail(skin.imageUrl).setTimestamp()] }); } catch {}
         collector.stop();
       });
       collector.on("end", (_, r) => { if (r === "time") interaction.editReply({ content: "⏰ Timed out.", embeds: [], components: [] }).catch(() => {}); });
@@ -1027,149 +1169,62 @@ const commands = [
 
   // ── /coinflip ────────────────────────────
   {
-    data: new SlashCommandBuilder().setName("coinflip").setDescription("Challenge another player to a V-Bucks coin flip!").addUserOption((o) => o.setName("player").setDescription("Player to challenge").setRequired(true)).addIntegerOption((o) => o.setName("amount").setDescription("V-Bucks to bet (default: 100)").setMinValue(10).setMaxValue(10000)),
-    async execute(interaction) {
-      const userId = interaction.user.id, target = interaction.options.getUser("player", true);
-      const amount = interaction.options.getInteger("amount") ?? 100;
-      if (target.id === userId) { await interaction.reply({ content: "❌ Can't challenge yourself!" }); return; }
-      if (target.bot) { await interaction.reply({ content: "❌ Can't challenge bots!" }); return; }
-      resetQuestsIfNeeded(userId); addInteraction(userId);
-      const challenger = getUser(userId);
-      if (!challenger.infiniteVbucks && challenger.vbucks < amount) { await interaction.reply({ content: `❌ Need **${amount.toLocaleString()} V-Bucks**.` }); return; }
-      const targetUser = getUser(target.id);
-      if (!targetUser.infiniteVbucks && targetUser.vbucks < amount) { await interaction.reply({ content: `❌ <@${target.id}> doesn't have enough V-Bucks.` }); return; }
-      progressQuest(userId, "challenge_flip");
-      updateUser(userId, { coinflipsPlayed: (challenger.coinflipsPlayed ?? 0) + 1 });
-      const challengeId = `${userId}_${target.id}_${Date.now()}`;
-      const embed = new EmbedBuilder().setTitle("🪙 Coin Flip Challenge!").setDescription(`<@${userId}> challenged <@${target.id}>!\n\n💰 **Bet:** ${amount.toLocaleString()} V-Bucks\n\n<@${target.id}>, pick your side!`).setColor(0xf4a01a).setTimestamp();
-      const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`flip_heads_${challengeId}`).setLabel("🪙 Heads").setStyle(ButtonStyle.Primary), new ButtonBuilder().setCustomId(`flip_tails_${challengeId}`).setLabel("🪙 Tails").setStyle(ButtonStyle.Primary), new ButtonBuilder().setCustomId(`flip_decline_${challengeId}`).setLabel("❌ Decline").setStyle(ButtonStyle.Danger));
-      const msg = await interaction.reply({ content: `<@${target.id}>`, embeds: [embed], components: [row], fetchReply: true });
-      setCoinflipChallenge(challengeId, { challengerId: userId, challengedId: target.id, amount });
-      const collector = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 60000, filter: (b) => b.user.id === target.id || b.user.id === userId });
-      collector.on("collect", async (btn) => {
-        if (btn.user.id !== target.id && !btn.customId.includes("decline")) { await btn.reply({ content: "❌ Only the challenged player can pick!", ephemeral: true }); return; }
-        const challenge = getCoinflipChallenge(challengeId);
-        if (!challenge) { await btn.update({ content: "❌ Challenge expired.", embeds: [], components: [] }); return; }
-        if (btn.customId.includes("decline")) { deleteCoinflipChallenge(challengeId); await btn.update({ embeds: [new EmbedBuilder().setTitle("❌ Challenge Declined").setDescription(`<@${target.id}> declined.`).setColor(0xff0000).setTimestamp()], components: [], content: "" }); collector.stop(); return; }
-        const pickedHeads = btn.customId.includes("heads");
-        const result = Math.random() < 0.5 ? "heads" : "tails";
-        const won = (pickedHeads && result === "heads") || (!pickedHeads && result === "tails");
-        const winnerId = won ? target.id : userId, loserId = won ? userId : target.id;
-        if (!getUser(loserId).infiniteVbucks) addVbucks(loserId, -amount);
-        addVbucks(winnerId, amount); addXP(winnerId, 100);
-        const winner = getUser(winnerId); winner.coinflipsWon = (winner.coinflipsWon ?? 0) + 1;
-        checkAndAwardAchievements(winnerId);
-        progressQuest(won ? target.id : userId, "win_coinflip");
-        deleteCoinflipChallenge(challengeId);
-        await btn.update({ embeds: [new EmbedBuilder().setTitle(`🪙 The coin landed on **${result.toUpperCase()}**!`).setDescription(`${btn.user.username} picked **${pickedHeads ? "Heads" : "Tails"}**.\n\n🏆 **<@${winnerId}> wins ${amount.toLocaleString()} V-Bucks!**\n💸 <@${loserId}> loses ${amount.toLocaleString()} V-Bucks.`).setColor(won ? 0x00ff00 : 0xff0000).setTimestamp()], components: [], content: "" });
-        collector.stop();
-      });
-      collector.on("end", (_, r) => { if (r === "time") { deleteCoinflipChallenge(challengeId); interaction.editReply({ content: "⏰ Challenge expired.", embeds: [], components: [] }).catch(() => {}); } });
-    },
-  },
-
-  // ── /savetheworld ────────────────────────
-  {
-    data: new SlashCommandBuilder().setName("savetheworld").setDescription("View your Save the World quests and earn XP to level up"),
-    async execute(interaction) {
-      const userId = interaction.user.id; resetQuestsIfNeeded(userId); addInteraction(userId);
-      const buildSTWEmbed = () => {
-        const user = getUser(userId), li = calculateLevelFromXP(user.xp);
-        const bar = "█".repeat(Math.round((li.xpInLevel / li.xpForNext) * 10)) + "░".repeat(10 - Math.round((li.xpInLevel / li.xpForNext) * 10));
-        const questLines = user.quests.map((q) => { const done = q.completed ? "✅" : "🔲"; const qb = "█".repeat(Math.round((q.current / q.required) * 8)) + "░".repeat(8 - Math.round((q.current / q.required) * 8)); return `${done} **${q.label}**\n   \`${qb}\` ${q.current}/${q.required} · +${q.xpReward} XP`; });
-        return new EmbedBuilder().setTitle("⚡ Save the World").setDescription(`**${interaction.user.username}** — Level **${user.level}** · **${user.boxes}** box(es)\n\n**XP Progress:**\n\`${bar}\` ${li.xpInLevel}/${li.xpForNext}\n\n**Daily Quests:**\n\n${questLines.join("\n\n")}\n\n*Quests reset every 24h. Level up to earn STW Boxes!*`).setColor(0xff6600).setFooter({ text: "Complete quests to level up and earn STW Boxes!" }).setTimestamp();
-      };
-      const buildSTWRow = () => { const user = getUser(userId); return new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`stw_openbox`).setLabel(user.boxes > 0 ? `🎁 Open Box (${user.boxes} available)` : "🎁 No Boxes Yet").setStyle(user.boxes > 0 ? ButtonStyle.Success : ButtonStyle.Secondary).setDisabled(user.boxes === 0), new ButtonBuilder().setCustomId(`stw_refresh`).setLabel("🔄 Refresh").setStyle(ButtonStyle.Primary)); };
-      const msg = await interaction.reply({ embeds: [buildSTWEmbed()], components: [buildSTWRow()], fetchReply: true });
-      const collector = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 5 * 60 * 1000, filter: (b) => b.user.id === userId });
-      collector.on("collect", async (btn) => {
-        if (btn.customId === "stw_refresh") { resetQuestsIfNeeded(userId); await btn.update({ embeds: [buildSTWEmbed()], components: [buildSTWRow()] }); return; }
-        if (btn.customId === "stw_openbox") {
-          const freshUser = getUser(userId);
-          if (freshUser.boxes <= 0) { await btn.reply({ content: "❌ No boxes!", ephemeral: true }); return; }
-          updateUser(userId, { boxes: freshUser.boxes - 1, boxesOpened: (freshUser.boxesOpened ?? 0) + 1 }); checkAndAwardAchievements(userId);
-          let resultEmbed;
-          if (Math.random() < 0.2) { addVbucks(userId, 250); resultEmbed = new EmbedBuilder().setTitle("🎁 STW Box Opened!").setDescription(`💰 **250 V-Bucks**!\n\n*Boxes remaining: ${freshUser.boxes - 1}*`).setColor(0xf4a01a).setTimestamp(); }
-          else { const stwSkin = await getRandomStwSkin(); if (stwSkin) { addSkinToInventory(userId, stwSkin.id, stwSkin.name); resultEmbed = new EmbedBuilder().setTitle("🎁 STW Box Opened!").setDescription(`${getRarityEmoji(stwSkin.rarity)} **${stwSkin.name}**!\n✨ Rarity: **${stwSkin.rarity}**\n\n*Boxes remaining: ${freshUser.boxes - 1}*`).setColor(getRarityColor(stwSkin.rarity)).setImage(stwSkin.imageUrl).setTimestamp(); }
-          else { addVbucks(userId, 250); resultEmbed = new EmbedBuilder().setTitle("🎁 STW Box Opened!").setDescription(`💰 **250 V-Bucks**!\n\n*Boxes remaining: ${freshUser.boxes - 1}*`).setColor(0xf4a01a).setTimestamp(); } }
-          await btn.reply({ embeds: [resultEmbed] });
-          await interaction.editReply({ components: [buildSTWRow()] }).catch(() => {});
-        }
-      });
-      collector.on("end", async () => { await interaction.editReply({ components: [] }).catch(() => {}); });
-    },
-  },
-
-  // ── /founderspack (UNIFIED) ──────────────
-  {
-    data: new SlashCommandBuilder().setName("founderspack").setDescription("Founders Pack — view bot quests (auto-complete), open Founders Boxes, and more"),
+    data: new SlashCommandBuilder().setName("coinflip").setDescription("Flip a coin — heads or tails!").addStringOption((o) => o.setName("side").setDescription("Heads or Tails?").setRequired(true).addChoices({ name: "Heads", value: "heads" }, { name: "Tails", value: "tails" })).addIntegerOption((o) => o.setName("wager").setDescription("V-Bucks to wager (50–2000)").setRequired(false).setMinValue(50).setMaxValue(2000)),
     async execute(interaction) {
       const userId = interaction.user.id;
       resetQuestsIfNeeded(userId); addInteraction(userId);
+      const side = interaction.options.getString("side", true);
+      const wager = interaction.options.getInteger("wager") ?? 100;
       const user = getUser(userId);
-      if (!user.hasFoundersPack) {
-        if ((user.foundersBoxes ?? 0) > 0) { await interaction.reply({ embeds: [new EmbedBuilder().setTitle("📦 Founders Box Waiting!").setDescription(`You have **${user.foundersBoxes} Founders Box${user.foundersBoxes > 1 ? "es" : ""}** waiting — but no **Founders Pack** yet!\n\nWatch the spawn channel and type \`buy\` when a Founders Pack appears!`).setColor(0xffd700).setImage(FP_PACK_IMAGE).setTimestamp()] }); return; }
-        await interaction.reply({ embeds: [new EmbedBuilder().setTitle("🔒 Founders Pack Required").setDescription(`You don't own a **Founders Pack** yet!\n\nWatch the spawn channel and type \`buy\` when a Founders Pack appears!\n\n**Once unlocked you get:**\n• Bot-related quests that auto-complete\n• Founders Boxes worth 100–550 V-Bucks each\n• 5% chance for a 🌟 God Chest from each box`).setColor(0xff4444).setImage(FP_PACK_IMAGE).setTimestamp()] }); return;
-      }
-      let autoAwardMsg = "";
-      const { newBoxes, quests: checkedQuests } = checkFoundersQuests(userId);
-      if (newBoxes > 0) autoAwardMsg = `\n\n🎉 **${newBoxes} quest${newBoxes > 1 ? "s" : ""} completed — +${newBoxes} Founders Box${newBoxes > 1 ? "es" : ""}!**`;
-      const allDone = checkedQuests.length === 0 || checkedQuests.every((q) => q.awardedBox);
-      if (allDone) assignFoundersQuests(userId);
+      if (!user.infiniteVbucks && user.vbucks < wager) { await interaction.reply({ content: `❌ Need **${wager} V-Bucks** to wager.` }); return; }
+      if (!user.infiniteVbucks) addVbucks(userId, -wager);
+      const result = Math.random() < 0.5 ? "heads" : "tails";
+      const won = result === side;
+      if (won) { addVbucks(userId, wager * 2); updateUser(userId, { coinflipsWon: (user.coinflipsWon ?? 0) + 1 }); progressQuest(userId, "win_coinflip"); }
+      updateUser(userId, { coinflipsPlayed: (user.coinflipsPlayed ?? 0) + 1 });
+      checkAndAwardAchievements(userId);
+      const updated = getUser(userId);
+      await interaction.reply({ embeds: [new EmbedBuilder().setTitle(won ? "🪙 You Won!" : "🪙 You Lost!").setDescription(`The coin landed on **${result.toUpperCase()}**!\n\nYou chose **${side.toUpperCase()}** — ${won ? `✅ Correct! **+${wager} V-Bucks**!` : `❌ Wrong! **-${wager} V-Bucks**`}\n\n💳 Balance: **${updated.infiniteVbucks ? "∞" : updated.vbucks.toLocaleString()} V-Bucks**`).setColor(won ? 0x00ff00 : 0xff0000).setTimestamp()] });
+    },
+  },
 
-      const buildFPEmbed = () => {
-        const fu = getUser(userId);
-        const quests = fu.foundersQuestPending ?? [];
-        const questLines = quests.map((q) => {
-          const current = Math.min((fu[q.stat] ?? 0) - (q.baseline ?? 0), q.required);
-          const qb = "█".repeat(Math.round((current / q.required) * 8)) + "░".repeat(8 - Math.round((current / q.required) * 8));
-          const done = current >= q.required;
-          return `${done ? "✅" : "🔲"} **${q.label}**\n   \`${qb}\` ${current}/${q.required}${done ? " *(auto-awarded!)*" : ""}`;
-        });
-        return new EmbedBuilder().setTitle("🌟 Founders Pack")
-          .setDescription(`Welcome, Founder! 🎉${autoAwardMsg}\n\n📦 **Founders Boxes:** ${fu.foundersBoxes}\n📬 **Boxes Opened:** ${fu.foundersBoxesOpened ?? 0}\n\n**Bot Quests** *(auto-complete as you play!)*\n\n${questLines.length ? questLines.join("\n\n") : "*No quests — click Refresh!*"}\n\n**Box Rewards:**\n> 💰 100 V-Bucks — *40%*\n> 💰 200 V-Bucks — *30%*\n> 💰 350 V-Bucks — *20%*\n> 💰 550 V-Bucks — *10%*\n> 🌟 God Chest — *5%*`)
-          .setColor(0xffd700).setImage(FP_BOX_IMAGE).setTimestamp();
-      };
-      const buildFPRow = () => {
-        const fu = getUser(userId);
-        return new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId("fp_open").setLabel(fu.foundersBoxes > 0 ? `📦 Open Box (${fu.foundersBoxes} available)` : "📦 No Boxes").setStyle(fu.foundersBoxes > 0 ? ButtonStyle.Success : ButtonStyle.Secondary).setDisabled(fu.foundersBoxes === 0),
-          new ButtonBuilder().setCustomId("fp_refresh").setLabel("🔄 Check Quests").setStyle(ButtonStyle.Primary)
-        );
-      };
-      const msg = await interaction.reply({ embeds: [buildFPEmbed()], components: [buildFPRow()], fetchReply: true });
-      const collector = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 5 * 60 * 1000, filter: (b) => b.user.id === userId });
+  // ── /challenge ───────────────────────────
+  {
+    data: new SlashCommandBuilder().setName("challenge").setDescription("Challenge another player to a coin flip!").addUserOption((o) => o.setName("player").setDescription("Player to challenge").setRequired(true)).addIntegerOption((o) => o.setName("wager").setDescription("V-Bucks to wager (50–2000)").setRequired(false).setMinValue(50).setMaxValue(2000)),
+    async execute(interaction) {
+      const userId = interaction.user.id, target = interaction.options.getUser("player", true);
+      const wager = interaction.options.getInteger("wager") ?? 100;
+      if (target.id === userId) { await interaction.reply({ content: "❌ Can't challenge yourself!" }); return; }
+      if (target.bot) { await interaction.reply({ content: "❌ Can't challenge bots!" }); return; }
+      resetQuestsIfNeeded(userId); addInteraction(userId);
+      progressQuest(userId, "challenge_flip");
+      const challenger = getUser(userId), targetData = getUser(target.id);
+      if (!challenger.infiniteVbucks && challenger.vbucks < wager) { await interaction.reply({ content: `❌ Need **${wager} V-Bucks**.` }); return; }
+      if (!targetData.infiniteVbucks && targetData.vbucks < wager) { await interaction.reply({ content: `❌ <@${target.id}> doesn't have enough V-Bucks.` }); return; }
+      const challengeId = `${userId}_${Date.now()}`;
+      setCoinflipChallenge(challengeId, { challengerId: userId, targetId: target.id, wager, expires: Date.now() + 60000 });
+      const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`flip_accept_${challengeId}`).setLabel("✅ Accept").setStyle(ButtonStyle.Success), new ButtonBuilder().setCustomId(`flip_decline_${challengeId}`).setLabel("❌ Decline").setStyle(ButtonStyle.Danger));
+      const msg = await interaction.reply({ content: `<@${target.id}>`, embeds: [new EmbedBuilder().setTitle("🪙 Coin Flip Challenge!").setDescription(`<@${userId}> challenged <@${target.id}> to a **coin flip**!\n\n💰 **Wager:** ${wager.toLocaleString()} V-Bucks each\n🏆 **Winner takes:** ${(wager * 2).toLocaleString()} V-Bucks\n\n<@${target.id}>, do you accept?`).setColor(0xf4a01a).setTimestamp()], components: [row], fetchReply: true });
+      const collector = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 60000, filter: (b) => b.user.id === target.id });
       collector.on("collect", async (btn) => {
-        if (btn.customId === "fp_refresh") {
-          const { newBoxes: nb2 } = checkFoundersQuests(userId);
-          const fu2 = getUser(userId);
-          if ((fu2.foundersQuestPending ?? []).every((q) => q.awardedBox)) assignFoundersQuests(userId);
-          await btn.update({ embeds: [buildFPEmbed()], components: [buildFPRow()] }); return;
-        }
-        if (btn.customId === "fp_open") {
-          const fu = getUser(userId);
-          if ((fu.foundersBoxes ?? 0) <= 0) { await btn.reply({ content: "❌ No Founders Boxes!", ephemeral: true }); return; }
-          updateUser(userId, { foundersBoxes: fu.foundersBoxes - 1, foundersBoxesOpened: (fu.foundersBoxesOpened ?? 0) + 1 });
-          const godChestChance = boostedChance(5, fu.activeLuck ?? "none");
-          if (roll(godChestChance)) {
-            const upd = getUser(userId); upd.godChest = (upd.godChest ?? 0) + 1;
-            const godRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("fp_open_godchest").setLabel("🌟 Open God Chest").setStyle(ButtonStyle.Success));
-            await btn.reply({ embeds: [new EmbedBuilder().setColor("#FFD700").setTitle("🌟 GOD CHEST!").setDescription("A **GOLD GOD CHEST** appeared from your Founders Box!\n\n> ⚡ This is extremely rare — do you dare open it?").setFooter({ text: "Click to open!" })], components: [godRow] });
-            const godMsg = await btn.fetchReply();
-            const godCol = godMsg.createMessageComponentCollector({ time: 60000 });
-            godCol.on("collect", async (b2) => {
-              if (b2.user.id !== userId) return b2.reply({ content: "❌ Not your chest!", ephemeral: true });
-              await openGodChestInteraction(b2, userId); godCol.stop();
-            });
-          } else {
-            const won = rollFoundersBoxVbucks(); addVbucks(userId, won);
-            const afterUser = getUser(userId);
-            await btn.reply({ embeds: [new EmbedBuilder().setTitle("📦 Founders Box Opened!").setDescription(`🎉 You found **${won.toLocaleString()} V-Bucks** inside!\n\n💳 **New balance:** ${afterUser.infiniteVbucks ? "∞" : afterUser.vbucks.toLocaleString()} V-Bucks\n📦 **Boxes remaining:** ${afterUser.foundersBoxes}`).setColor(0xffd700).setTimestamp()] });
-          }
-          await interaction.editReply({ components: [buildFPRow()] }).catch(() => {});
-        }
+        const ch = getCoinflipChallenge(challengeId);
+        if (!ch || Date.now() > ch.expires) { await btn.update({ content: "⏰ Challenge expired.", embeds: [], components: [] }); return; }
+        if (btn.customId.includes("decline")) { deleteCoinflipChallenge(challengeId); await btn.update({ embeds: [new EmbedBuilder().setTitle("❌ Challenge Declined").setDescription(`<@${target.id}> backed down!`).setColor(0x888888).setTimestamp()], components: [], content: "" }); return; }
+        deleteCoinflipChallenge(challengeId);
+        const fC = getUser(userId), fT = getUser(target.id);
+        if (!fC.infiniteVbucks) addVbucks(userId, -wager);
+        if (!fT.infiniteVbucks) addVbucks(target.id, -wager);
+        const result = Math.random() < 0.5 ? "heads" : "tails";
+        const winnerSide = Math.random() < 0.5 ? "heads" : "tails";
+        const winnerId = winnerSide === "heads" ? userId : target.id, loserId = winnerId === userId ? target.id : userId;
+        addVbucks(winnerId, wager * 2);
+        updateUser(winnerId, { coinflipsWon: (getUser(winnerId).coinflipsWon ?? 0) + 1 });
+        updateUser(userId, { coinflipsPlayed: (getUser(userId).coinflipsPlayed ?? 0) + 1 });
+        updateUser(target.id, { coinflipsPlayed: (getUser(target.id).coinflipsPlayed ?? 0) + 1 });
+        checkAndAwardAchievements(winnerId);
+        await btn.update({ embeds: [new EmbedBuilder().setTitle(`🪙 ${winnerId === userId ? interaction.user.username : target.username} wins!`).setDescription(`The coin landed on **${result.toUpperCase()}**!\n\n🏆 **<@${winnerId}>** wins **${(wager * 2).toLocaleString()} V-Bucks!**\n💸 **<@${loserId}>** loses **${wager.toLocaleString()} V-Bucks**`).setColor(0xffd700).setTimestamp()], components: [], content: "" });
       });
-      collector.on("end", async () => { await interaction.editReply({ components: [] }).catch(() => {}); });
+      collector.on("end", (_, r) => { if (r === "time") { deleteCoinflipChallenge(challengeId); interaction.editReply({ content: "⏰ Challenge expired.", embeds: [], components: [] }).catch(() => {}); } });
     },
   },
 
@@ -1547,7 +1602,6 @@ const commands = [
       if (isMulti && usedAmmo > 1) {
         let hits = 0, misses = 0;
         for (let i = 0; i < usedAmmo; i++) { if (Math.random() < HIT_CHANCE) hits++; else misses++; }
-        // Absorb hits with build charges
         let shieldAbsorbed = 0;
         if (hasShield && hits > 0) {
           shieldAbsorbed = Math.min(hits, targetUser.buildCharges);
@@ -1604,7 +1658,7 @@ const commands = [
     },
   },
 
-  // ── /useluckpotion (can target others) ───
+  // ── /useluckpotion ───────────────────────
   {
     data: new SlashCommandBuilder().setName("useluckpotion").setDescription("Use a luck potion on yourself or another player!").addStringOption((o) => o.setName("type").setDescription("Which luck potion?").setRequired(true).addChoices({ name: "🍀 Luck Potion (+15%)", value: "luckPotion" }, { name: "🔮 Xtra Luck Potion (+40%)", value: "xtraLuckPotion" }, { name: "⚡ Godly Luck Potion (+80%)", value: "godlyLuckPotion" })).addUserOption((o) => o.setName("player").setDescription("Player to give the luck boost to (default: yourself)").setRequired(false)),
     async execute(interaction) {
@@ -1621,7 +1675,6 @@ const commands = [
       updateUser(targetId, { activeLuck: luckKey });
       const INFO = { normal: { emoji: "🍀", label: "Luck Potion", boost: "+15%", color: "#2ecc71" }, xtra: { emoji: "🔮", label: "Xtra Luck Potion", boost: "+40%", color: "#9b59b6" }, godly: { emoji: "⚡", label: "Godly Luck Potion", boost: "+80%", color: "#f1c40f" } };
       const info = INFO[luckKey];
-      const targetData = getUser(targetId);
       await interaction.reply({ embeds: [new EmbedBuilder().setColor(info.color).setTitle(`${info.emoji} ${info.label} Activated!`).setDescription(isSelf ? `All your luck-based chances boosted by **${info.boost}**!` : `You gifted your **${info.label}** to <@${targetId}>!\n\nTheir luck-based chances are boosted by **${info.boost}**!`).addFields({ name: "God Chest Chance", value: `${boostedChance(5, luckKey)}%`, inline: true }, { name: "Inf V-Bucks Chance", value: `${boostedChance(15, luckKey)}%`, inline: true }, { name: "10k V-Bucks Chance", value: `${boostedChance(25, luckKey)}%`, inline: true }).setFooter({ text: isSelf ? "Active on yourself" : `Active on ${targetUser.username}` })] });
       if (!isSelf && interaction.channel?.send) await interaction.channel.send({ content: `<@${targetId}>`, embeds: [new EmbedBuilder().setColor(info.color).setTitle(`${info.emoji} You received a Luck Boost!`).setDescription(`<@${userId}> used their **${info.label}** on you!\n\nYour luck-based chances are boosted by **${info.boost}**!`)] });
     },
@@ -1655,8 +1708,6 @@ const commands = [
     },
   },
 
-  // ═══════════════ NEW COMMANDS ═══════════════
-
   // ── /llama ───────────────────────────────
   {
     data: new SlashCommandBuilder().setName("llama").setDescription("Open a Supply Llama! 1-hour cooldown — great random rewards inside"),
@@ -1673,7 +1724,6 @@ const commands = [
       await new Promise((r) => setTimeout(r, 2000));
       updateUser(userId, { lastLlama: now, llamaOpens: (user.llamaOpens ?? 0) + 1 });
       const luck = user.activeLuck;
-      // Loot table (weighted)
       const LLAMA_TABLE = [
         { weight: 20, fn: () => { addVbucks(userId, 200); return { desc: "💰 **200 V-Bucks**!", color: 0x00d4ff }; } },
         { weight: 15, fn: () => { addVbucks(userId, 500); return { desc: "💰 **500 V-Bucks**!", color: 0x00d4ff }; } },
@@ -1860,7 +1910,7 @@ const commands = [
       const eliminated = isEliminated(target.id);
       const timeLeft = eliminated ? Math.ceil(getEliminationTimeLeft(target.id) / 60000) : 0;
       const matInfo = targetData.buildCharges > 0 ? `${BUILD_MATS[targetData.buildMaterial]?.label ?? "🪵 Wood"} (${targetData.buildCharges} charge${targetData.buildCharges !== 1 ? "s" : ""})` : "None";
-      const vbDisplay = targetData.infiniteVbucks ? "∞ (Infinite!)" : `~${Math.floor(targetData.vbucks / 500) * 500}+`; // Approximate V-Bucks, not exact
+      const vbDisplay = targetData.infiniteVbucks ? "∞ (Infinite!)" : `~${Math.floor(targetData.vbucks / 500) * 500}+`;
       const spyActions = ["hacked a satellite dish", "bribed a llama", "intercepted their signals", "found their trophy case", "checked their Fortnite locker"];
       const spyFlavor = spyActions[Math.floor(Math.random() * spyActions.length)];
       await interaction.reply({ embeds: [new EmbedBuilder().setTitle(`🕵️ Intel Report — ${target.username}`).setDescription(`*You ${spyFlavor} and uncovered the following intelligence:*\n\n📊 **Level:** ${targetData.level}\n🎮 **Battle Pass Tier:** ${tier}/100\n🎒 **Skins:** ${targetData.inventory.length}\n💰 **V-Bucks (approx):** ${vbDisplay}\n🔥 **Daily Streak:** ${targetData.dailyStreak ?? 0} days\n🏗️ **Build:** ${matInfo}\n🪙 **Coin Flip W/L:** ${targetData.coinflipsWon ?? 0} wins\n${eliminated ? `\n☠️ **Status:** ELIMINATED (${timeLeft} min left)` : "\n✅ **Status:** Active in game"}\n\n*Stats may be incomplete due to encryption.*`).setColor(0x2c2c2c).setThumbnail(target.displayAvatarURL()).setFooter({ text: `Spy report • ${interaction.user.username}` }).setTimestamp()] });
@@ -1898,14 +1948,12 @@ const commands = [
           if (!getUser(loserId).infiniteVbucks) addVbucks(loserId, -amount);
           addVbucks(winnerId, amount); addXP(winnerId, 150);
           awardAchievement(winnerId, "duel_champion"); checkAndAwardAchievements(winnerId);
-          const winner = getUser(winnerId), loser = getUser(loserId);
           const moves = ["landed a perfect headshot", "built a 90 and edited out", "pump-sniped from 200m", "hit every shot with the Stinger", "RNG blessed them"];
           const move = moves[Math.floor(Math.random() * moves.length)];
           await interaction.editReply({ embeds: [new EmbedBuilder().setTitle(`⚔️ Duel Over — <@${winnerId}> wins!`).setDescription(`**<@${winnerId}>** ${move} and eliminated **<@${loserId}>**!\n\n🏆 **+${amount} V-Bucks** to the winner!\n💸 **-${amount} V-Bucks** from the loser\n\n${cLuck !== tLuck ? `> Luck difference: ${cLuck > tLuck ? `<@${userId}> had +${cLuck}% luck advantage` : `<@${target.id}> had +${tLuck}% luck advantage`}` : ""}`).setColor(0xffd700).setTimestamp()], content: "" });
         });
         collector.on("end", (_, r) => { if (r === "time") interaction.editReply({ content: "⏰ Duel expired.", embeds: [], components: [] }).catch(() => {}); });
       } else {
-        // Skin duel
         const challSkins = Object.entries(challenger.inventoryNames), targSkins = Object.entries(targetData.inventoryNames);
         if (!challSkins.length) { await interaction.editReply({ content: "❌ You have no skins to wager." }); return; }
         if (!targSkins.length) { await interaction.editReply({ content: `❌ <@${target.id}> has no skins to wager.` }); return; }
@@ -1920,22 +1968,156 @@ const commands = [
             await i.update({ embeds: [new EmbedBuilder().setTitle("⚔️ Skin Duel!").setDescription(`<@${userId}> wagers **${challPick.name}**!\n\n<@${target.id}>, pick your skin to wager:`).setColor(0xff4444).setTimestamp()], components: [new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("duel_skin_target").setPlaceholder("Pick your skin...").addOptions(targOpts))] }); return;
           }
           if (i.isStringSelectMenu() && i.customId === "duel_skin_target" && i.user.id === target.id) {
+            if (!challPick) { await i.reply({ content: "❌ Wait!", ephemeral: true }); return; }
             targPick = { key: i.values[0], name: targetData.inventoryNames[i.values[0]] };
-            await i.update({ embeds: [new EmbedBuilder().setTitle("⚔️ Skin Duel!").setDescription(`**<@${userId}>** wagers **${challPick.name}**\n**<@${target.id}>** wagers **${targPick.name}**\n\n*The duel begins...*`).setColor(0xff0000).setTimestamp()], components: [] });
-            await new Promise((r) => setTimeout(r, 2500));
-            const cLuck = LUCK_BOOST[challenger.activeLuck] ?? 0, tLuck = LUCK_BOOST[targetData.activeLuck] ?? 0;
-            const cScore = Math.random() * 100 + cLuck, tScore = Math.random() * 100 + tLuck;
-            const [winnerId, loserId, winnerPick, loserPick] = cScore > tScore ? [userId, target.id, targPick, challPick] : [target.id, userId, challPick, targPick];
+            const confirmRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("sduel_confirm").setLabel("⚔️ Both Confirm — Fight!").setStyle(ButtonStyle.Danger));
+            await i.update({ embeds: [new EmbedBuilder().setTitle("⚔️ Skin Duel — Ready?").setDescription(`**<@${userId}>** wagers: **${challPick.name}**\n**<@${target.id}>** wagers: **${targPick.name}**\n\nClick to fight!`).setColor(0xff4444).setTimestamp()], components: [confirmRow] }); return;
+          }
+          if (i.isButton() && i.customId === "sduel_confirm") {
+            collector2.stop("done");
+            await i.update({ embeds: [new EmbedBuilder().setTitle("⚔️ Duel in Progress!").setDescription("```\n3...\n2...\n1...\nFIRE!\n```").setColor(0xff4444).setTimestamp()], components: [] });
+            await new Promise((r) => setTimeout(r, 2000));
+            const cLuck2 = LUCK_BOOST[challenger.activeLuck] ?? 0, tLuck2 = LUCK_BOOST[targetData.activeLuck] ?? 0;
+            const cScore2 = Math.random() * 100 + cLuck2, tScore2 = Math.random() * 100 + tLuck2;
+            const winnerId = cScore2 > tScore2 ? userId : target.id, loserId = winnerId === userId ? target.id : userId;
+            const loserPick = loserId === userId ? challPick : targPick;
             const winnerData = getUser(winnerId), loserData = getUser(loserId);
             const idx = loserData.inventory.indexOf(loserPick.key.replace(/_\d+$/, "")); if (idx !== -1) loserData.inventory.splice(idx, 1); delete loserData.inventoryNames[loserPick.key];
             addSkinToInventory(winnerId, loserPick.key.replace(/_\d+$/, ""), loserPick.name);
             awardAchievement(winnerId, "duel_champion"); checkAndAwardAchievements(winnerId);
             await interaction.editReply({ embeds: [new EmbedBuilder().setTitle(`⚔️ Skin Duel — <@${winnerId}> wins!`).setDescription(`**<@${winnerId}>** outplayed **<@${loserId}>**!\n\n🏆 **<@${winnerId}>** receives **${loserPick.name}**!\n\n*Check \`/inventory\` to see your new skin.*`).setColor(0xffd700).setTimestamp()], content: "" });
-            collector2.stop("done");
           }
         });
         collector2.on("end", (_, r) => { if (r === "time") interaction.editReply({ content: "⏰ Duel expired.", embeds: [], components: [] }).catch(() => {}); });
       }
+    },
+  },
+
+  // ── /musicpass ───────────────────────────
+  {
+    data: new SlashCommandBuilder().setName("musicpass").setDescription("Purchase today's Music Pass — 1 exclusive Icon Series skin! Refreshes every 24 hours"),
+    async execute(interaction) {
+      await interaction.deferReply();
+      const userId = interaction.user.id;
+      resetQuestsIfNeeded(userId); addInteraction(userId);
+      const skin = await getMusicPass();
+      if (!skin) { await interaction.editReply({ content: "❌ No Icon Series skins available right now. Try again later!" }); return; }
+      const MUSIC_PASS_COST = 1000;
+      const alreadyPurchased = (_data.musicPassPurchasers[userId] ?? 0) > Date.now() - MUSIC_PASS_RESET_MS;
+      const msLeft = Math.max(0, MUSIC_PASS_RESET_MS - (Date.now() - _data.musicPass.lastReset));
+      const rh = Math.floor(msLeft / 3600000), rm = Math.floor((msLeft % 3600000) / 60000);
+      if (alreadyPurchased) {
+        const timeLeft = Math.max(0, (_data.musicPassPurchasers[userId] ?? 0) + MUSIC_PASS_RESET_MS - Date.now());
+        const h2 = Math.floor(timeLeft / 3600000), m2 = Math.floor((timeLeft % 3600000) / 60000);
+        await interaction.editReply({ embeds: [new EmbedBuilder().setTitle("🎵 Music Pass — Already Purchased").setDescription(`You already purchased today's Music Pass!\n\n🩵 **Today's skin:** ${getRarityEmoji(skin.rarity)} **${skin.name}**\n✨ Rarity: **${skin.rarity}**\n\n⏳ **Next refresh in:** ${rh}h ${rm}m\n\n*Come back tomorrow for a new Icon Series skin!*`).setColor(getRarityColor(skin.rarity)).setImage(skin.imageUrl).setTimestamp()] });
+        return;
+      }
+      const user = getUser(userId);
+      const embed = new EmbedBuilder()
+        .setTitle("🎵 Music Pass")
+        .setDescription(`Today's Music Pass features an exclusive **Icon Series** skin:\n\n${getRarityEmoji(skin.rarity)} **${skin.name}**\n✨ Rarity: **${skin.rarity}**\n*${skin.description}*\n\n💰 **Cost: 1,000 V-Bucks**\n💳 **Your balance:** ${user.infiniteVbucks ? "∞" : user.vbucks.toLocaleString()} V-Bucks\n\n🔄 **Refreshes in:** ${rh}h ${rm}m\n\n> Purchase the Music Pass to get this exclusive Icon skin added to your locker!`)
+        .setColor(getRarityColor(skin.rarity))
+        .setImage(skin.imageUrl)
+        .setFooter({ text: "Music Pass • 1 Icon Series skin • Refreshes every 24 hours" })
+        .setTimestamp();
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("musicpass_buy").setLabel("🎵 Purchase — 1,000 V-Bucks").setStyle(ButtonStyle.Success)
+      );
+      const msg = await interaction.editReply({ embeds: [embed], components: [row] });
+      const collector = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 2 * 60 * 1000, filter: (b) => b.user.id === userId });
+      collector.on("collect", async (btn) => {
+        const freshUser = getUser(userId);
+        const alreadyBought = (_data.musicPassPurchasers[userId] ?? 0) > Date.now() - MUSIC_PASS_RESET_MS;
+        if (alreadyBought) { await btn.reply({ content: "❌ You already purchased today's Music Pass!", ephemeral: true }); return; }
+        if (!freshUser.infiniteVbucks && freshUser.vbucks < MUSIC_PASS_COST) {
+          await btn.reply({ content: `❌ Need **1,000 V-Bucks** but you only have **${freshUser.vbucks.toLocaleString()}**.`, ephemeral: true }); return;
+        }
+        if (!freshUser.infiniteVbucks) addVbucks(userId, -MUSIC_PASS_COST);
+        addSkinToInventory(userId, skin.id + "_musicpass_" + Date.now(), skin.name + " 🎵");
+        _data.musicPassPurchasers[userId] = Date.now();
+        saveData();
+        const updated = getUser(userId);
+        collector.stop("purchased");
+        await btn.update({ embeds: [new EmbedBuilder()
+          .setTitle("🎵 Music Pass Purchased!")
+          .setDescription(`${getRarityEmoji(skin.rarity)} **${skin.name}** has been added to your locker!\n\n💰 **Spent:** 1,000 V-Bucks\n💳 **Remaining:** ${updated.infiniteVbucks ? "∞" : updated.vbucks.toLocaleString()} V-Bucks\n\n🔄 Come back in **${rh}h ${rm}m** for the next Music Pass!`)
+          .setColor(getRarityColor(skin.rarity))
+          .setThumbnail(skin.imageUrl)
+          .setTimestamp()], components: [] });
+      });
+      collector.on("end", (_, r) => { if (r === "time") interaction.editReply({ embeds: [embed], components: [] }).catch(() => {}); });
+    },
+  },
+
+  // ── /crew ────────────────────────────────
+  {
+    data: new SlashCommandBuilder().setName("crew").setDescription("Join the Fortnite Crew for 1,000 V-Bucks, a Music Pass, and an exclusive Crew Series skin!"),
+    async execute(interaction) {
+      await interaction.deferReply();
+      const userId = interaction.user.id;
+      resetQuestsIfNeeded(userId); addInteraction(userId);
+      // Step 1: Show the offer
+      const offerEmbed = new EmbedBuilder()
+        .setTitle("👑 Fortnite Crew")
+        .setDescription("**Subscribe to Fortnite Crew!**\n\n**What you get each month:**\n💰 **1,000 V-Bucks**\n🎵 **Free Music Pass**\n🎮 **Exclusive Crew Series skin**\n\n**Price:** £10 / month\n\n*Connecting to payment processor...*")
+        .setColor(0x4169e1)
+        .setTimestamp();
+      await interaction.editReply({ embeds: [offerEmbed] });
+      await new Promise(r => setTimeout(r, 2000));
+      // Step 2: Show the payment error
+      const errorEmbed = new EmbedBuilder()
+        .setTitle("❌ Payment Error — DISCORD_PAYMENT_BLOCKED")
+        .setDescription("```\nERROR: Cannot process real-money transactions\nCode: DISCORD_PAYMENT_BLOCKED\n```\n\n> You cannot pay for Fortnite Crew with real money on a Discord bot.\n>\n> Discord bots do not support payment processors or real currency. To subscribe to Fortnite Crew, visit the Fortnite game client or Epic Games Store.\n\n**However...** a complimentary Crew Code has been generated for you! 👑")
+        .setColor(0xff0000)
+        .setTimestamp();
+      await interaction.editReply({ embeds: [errorEmbed] });
+      await new Promise(r => setTimeout(r, 1500));
+      // Step 3: Generate and show crew code
+      const code = generateCrewCode();
+      _data.crewCodes[code] = { generatedAt: Date.now(), used: false };
+      saveData();
+      const crewSkin = await getCrewSkin();
+      const crewEmbed = new EmbedBuilder()
+        .setTitle("👑 Crew Code Generated!")
+        .setDescription(`A Fortnite Crew Code has been generated!\n\n**Crew Pack includes:**\n💰 **1,000 V-Bucks**\n🎵 **Free Music Pass** (30 days)\n🎮 **${crewSkin ? crewSkin.name : "Exclusive Crew Skin"}** *(👑 Crew Series)*\n\n\`\`\`${code}\`\`\`\n\nClick **Redeem Crew Code** to claim your rewards!\nThe code will also be sent to your DMs.`)
+        .setColor(0x4169e1)
+        .setFooter({ text: "👑 Crew Code • Click to redeem!" })
+        .setTimestamp();
+      if (crewSkin?.imageUrl) crewEmbed.setThumbnail(crewSkin.imageUrl);
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`crew_slash_${code}`).setLabel("👑 Redeem Crew Code").setStyle(ButtonStyle.Primary)
+      );
+      const msg = await interaction.editReply({ embeds: [crewEmbed], components: [row] });
+      const collector = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 24 * 60 * 60 * 1000 });
+      collector.on("collect", async (btn) => {
+        const btnCode = btn.customId.replace("crew_slash_", "");
+        const codeData = _data.crewCodes[btnCode];
+        if (!codeData || codeData.used) { await btn.reply({ content: "❌ This crew code has already been redeemed!", ephemeral: true }); return; }
+        codeData.used = true;
+        codeData.userId = btn.user.id;
+        saveData();
+        collector.stop("redeemed");
+        const rUserId = btn.user.id;
+        addVbucks(rUserId, 1000);
+        updateUser(rUserId, { hasMusicPass: true, musicPassExpiry: Date.now() + 30 * 24 * 60 * 60 * 1000 });
+        if (crewSkin) addSkinToInventory(rUserId, crewSkin.id + "_crew_" + Date.now(), crewSkin.name + " (Crew)");
+        const updated = getUser(rUserId);
+        // DM the code
+        try {
+          const dm = await btn.user.createDM();
+          await dm.send({ embeds: [new EmbedBuilder()
+            .setTitle("👑 Your Fortnite Crew Code")
+            .setDescription(`Welcome to the Crew!\n\n**Your Crew Code:**\n\`\`\`${btnCode}\`\`\`\n\n**Rewards received:**\n💰 +1,000 V-Bucks\n🎵 Music Pass (30 days)\n🎮 ${crewSkin ? crewSkin.name + " (Crew Series)" : "Crew Series Skin"}\n\n*Keep this code safe!*`)
+            .setColor(0x4169e1)
+            .setTimestamp()] });
+        } catch { /* User has DMs disabled */ }
+        await btn.update({ embeds: [new EmbedBuilder()
+          .setTitle("👑 Crew Code Redeemed!")
+          .setDescription(`Welcome to the Crew, <@${rUserId}>!\n\n💰 **+1,000 V-Bucks** added!\n🎵 **Music Pass** activated (30 days)!\n🎮 **${crewSkin ? crewSkin.name : "Crew Skin"}** (Crew Series) added to your locker!\n\n💳 **Balance:** ${updated.infiniteVbucks ? "∞" : updated.vbucks.toLocaleString()} V-Bucks\n\n📬 **Check your DMs** — your crew code \`${btnCode}\` was sent there!`)
+          .setColor(0x4169e1)
+          .setTimestamp()], components: [] });
+      });
+      collector.on("end", (_, r) => { if (r === "time") interaction.editReply({ components: [] }).catch(() => {}); });
     },
   },
 ];
@@ -1950,7 +2132,6 @@ async function registerCommands(token, clientId) {
     const rest = new REST({ version: "10" }).setToken(token);
     const body = commands.map((c) => c.data.toJSON());
 
-    // Multi-guild support
     const guildIdsRaw = process.env.GUILD_IDS;
 
     if (guildIdsRaw) {
@@ -1959,7 +2140,6 @@ async function registerCommands(token, clientId) {
         .map(id => id.trim())
         .filter(Boolean);
 
-      // Clear + register each guild
       for (const guildId of guildIds) {
         await rest.put(
           Routes.applicationGuildCommands(clientId, guildId),
@@ -1974,7 +2154,6 @@ async function registerCommands(token, clientId) {
         console.log(`✅ Registered ${body.length} commands for guild ${guildId}`);
       }
     } else {
-      // Global fallback
       await rest.put(
         Routes.applicationCommands(clientId),
         { body }
@@ -1999,6 +2178,7 @@ client.once("ready", async () => {
   await registerCommands(token, clientId, guildId);
   try { await fetchFortniteSkins(); console.log("✅ Fortnite skins loaded"); } catch (err) { console.warn("⚠️ Could not pre-load skins:", err.message); }
   initSpawner(client);
+  console.log(`💾 Data loaded from ${fs.existsSync(DATA_FILE) ? DATA_FILE : "fresh state"}`);
 });
 
 client.on("interactionCreate", async (interaction) => {
@@ -2027,4 +2207,8 @@ const token = process.env.DISCORD_TOKEN || process.env.DISCORD_BOT_TOKEN;
 if (token) client.login(token).catch((err) => console.error("❌ Discord login failed:", err.message));
 else console.warn("⚠️ No DISCORD_TOKEN — Express server running but bot is offline.");
 
-process.on("SIGTERM", () => { client.destroy(); process.exit(0); });
+process.on("SIGTERM", () => {
+  if (_saveTimeout) { clearTimeout(_saveTimeout); fs.writeFileSync(DATA_FILE, JSON.stringify(_data)); }
+  client.destroy();
+  process.exit(0);
+});
