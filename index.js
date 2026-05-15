@@ -13,14 +13,13 @@ const {
 // ─────────────────────────────────────────────
 const fs   = require("fs");
 const path = require("path");
-const { Pool } = require("pg");
+const pg   = require("pg");
 
-const _pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false,
-});
+const _pool = new pg.Pool();   // reads DATABASE_URL + PGSSL* from env automatically
 
-// In-memory cache — always up-to-date, flushed to Postgres on every save()
+// ─────────────────────────────────────────────
+//  In-memory store (mirrors Postgres)
+// ─────────────────────────────────────────────
 let _db = {
   users: {},
   itemShop: { skins: [], lastReset: 0 },
@@ -30,11 +29,32 @@ let _db = {
   crewCodes: {},
 };
 
+// Debounced save — batches rapid writes into one DB round-trip
+let _saveTimer = null;
+function save() {
+  if (_saveTimer) clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(() => {
+    _saveTimer = null;
+    _pool.query(
+      `INSERT INTO bot_store (key, value, updated_at)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+      ["data", JSON.stringify(_db)]
+    ).catch((err) => console.error("[data] save failed:", err.message));
+  }, 300);
+}
+
 async function initDB() {
-  await _pool.query(
-    `CREATE TABLE IF NOT EXISTS bot_kv (key TEXT PRIMARY KEY, value JSONB NOT NULL)`
+  await _pool.query(`
+    CREATE TABLE IF NOT EXISTS bot_store (
+      key        TEXT        PRIMARY KEY,
+      value      JSONB       NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  const res = await _pool.query(
+    "SELECT value FROM bot_store WHERE key = $1", ["data"]
   );
-  const res = await _pool.query(`SELECT value FROM bot_kv WHERE key = 'main'`);
   if (res.rows.length > 0) {
     const stored = res.rows[0].value;
     if (stored.users)              _db.users              = stored.users;
@@ -45,20 +65,15 @@ async function initDB() {
     if (stored.crewCodes)          _db.crewCodes          = stored.crewCodes;
     console.log(`[data] Loaded ${Object.keys(_db.users).length} users from PostgreSQL`);
   } else {
-    console.log("[data] Fresh database — no existing data found");
+    await _pool.query(
+      "INSERT INTO bot_store (key, value) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+      ["data", JSON.stringify(_db)]
+    );
+    console.log("[data] Fresh database initialised");
   }
 }
 
 function db() { return _db; }
-
-// Fire-and-forget async upsert — in-memory cache is always the source of truth
-function save() {
-  _pool.query(
-    `INSERT INTO bot_kv (key, value) VALUES ('main', $1::jsonb)
-     ON CONFLICT (key) DO UPDATE SET value = $1::jsonb`,
-    [JSON.stringify(_db)]
-  ).catch((err) => console.error("[data] save failed:", err.message));
-}
 
 // ─────────────────────────────────────────────
 //  Default structures
