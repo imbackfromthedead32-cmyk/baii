@@ -9,35 +9,56 @@ const {
 } = require("discord.js");
 
 // ─────────────────────────────────────────────
-//  Data layer (inlined — no external files needed)
+//  Data layer — PostgreSQL permanent storage
 // ─────────────────────────────────────────────
-const fs = require("fs");
+const fs   = require("fs");
 const path = require("path");
-const DB_FILE = path.join(__dirname, "db.json");
+const { Pool } = require("pg");
 
-// ─────────────────────────────────────────────
-//  Load / Save
-// ─────────────────────────────────────────────
-function loadDB() {
-  try {
-    if (fs.existsSync(DB_FILE)) {
-      return JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
-    }
-  } catch {}
-  return {};
-}
+const _pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false,
+});
 
-function saveDB(db) {
-  try {
-    fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
-  } catch (err) {
-    console.error("[data] saveDB failed:", err.message);
+// In-memory cache — always up-to-date, flushed to Postgres on every save()
+let _db = {
+  users: {},
+  itemShop: { skins: [], lastReset: 0 },
+  musicPass: { skin: null, lastReset: 0, purchasers: [] },
+  spawnChannels: {},
+  coinflipChallenges: {},
+  crewCodes: {},
+};
+
+async function initDB() {
+  await _pool.query(
+    `CREATE TABLE IF NOT EXISTS bot_kv (key TEXT PRIMARY KEY, value JSONB NOT NULL)`
+  );
+  const res = await _pool.query(`SELECT value FROM bot_kv WHERE key = 'main'`);
+  if (res.rows.length > 0) {
+    const stored = res.rows[0].value;
+    if (stored.users)              _db.users              = stored.users;
+    if (stored.itemShop)           _db.itemShop           = stored.itemShop;
+    if (stored.musicPass)          _db.musicPass          = stored.musicPass;
+    if (stored.spawnChannels)      _db.spawnChannels      = stored.spawnChannels;
+    if (stored.coinflipChallenges) _db.coinflipChallenges = stored.coinflipChallenges;
+    if (stored.crewCodes)          _db.crewCodes          = stored.crewCodes;
+    console.log(`[data] Loaded ${Object.keys(_db.users).length} users from PostgreSQL`);
+  } else {
+    console.log("[data] Fresh database — no existing data found");
   }
 }
 
-let _db = loadDB();
 function db() { return _db; }
-function save() { saveDB(_db); }
+
+// Fire-and-forget async upsert — in-memory cache is always the source of truth
+function save() {
+  _pool.query(
+    `INSERT INTO bot_kv (key, value) VALUES ('main', $1::jsonb)
+     ON CONFLICT (key) DO UPDATE SET value = $1::jsonb`,
+    [JSON.stringify(_db)]
+  ).catch((err) => console.error("[data] save failed:", err.message));
+}
 
 // ─────────────────────────────────────────────
 //  Default structures
@@ -122,14 +143,8 @@ function defaultStore() {
   };
 }
 
-// Ensure top-level keys exist
-if (!_db.users)               _db.users               = {};
-if (!_db.itemShop)            _db.itemShop            = { skins: [], lastReset: 0 };
-if (!_db.musicPass)           _db.musicPass           = { skin: null, lastReset: 0, purchasers: [] };
-if (!_db.spawnChannels)       _db.spawnChannels       = {};
-if (!_db.coinflipChallenges)  _db.coinflipChallenges  = {};
-if (!_db.crewCodes)           _db.crewCodes           = {};
-save();
+// Top-level keys are pre-initialised in the _db default above; initDB() fills
+// them from Postgres before the bot logs in.
 
 // ─────────────────────────────────────────────
 //  XP helpers
@@ -706,7 +721,7 @@ const STATIC_BUNDLES = [
     id: "bundle_eyekonic",
     name: "EYEKONIC Bundle",
     rarity: "Icon",
-    imageUrl: "",
+    imageUrl: "https://cdn.discordapp.com/attachments/1504485556325715980/1504534511734755418/250701-eyekons-global-membership-is-officially-open-v0-wz97d3saEhaS8vrod4ixzNY0QxorUEbCSmRWHTpJiSg.jpg?ex=6a07ff34&is=6a06adb4&hm=1b7dda52f15c7f150c66f2e21185e371649d5457d70cb7aff616c2a0004dad92&",
     price: BUNDLE_PRICE,
     isBundle: true,
     skins: [
@@ -722,7 +737,7 @@ const STATIC_BUNDLES = [
     id: "bundle_pinkyup",
     name: "PINKY UP Bundle",
     rarity: "Icon",
-    imageUrl: "",
+    imageUrl: "https://cdn.discordapp.com/attachments/1504485556325715980/1504534511327772682/channels4_profile.jpg?ex=6a07ff34&is=6a06adb4&hm=ad77502395150f5fb7851507d58beff19a56bc3c357ff08fe881ae56c60132ed&",
     price: BUNDLE_PRICE,
     isBundle: true,
     skins: [
@@ -741,14 +756,14 @@ let _overwatchBundleCache = null;
 async function getOverwatchBundle() {
   if (_overwatchBundleCache) return _overwatchBundleCache;
   const skins = await fetchFortniteSkins();
-  const OW_TERMS = ["tracer","genji","kiriko","mercy","pharah","overwatch","dva","soldier:76","reaper","widowmaker","ana","hanzo","bastion","symmetra","winston","zarya","roadhog","junkrat","lucio","moira"];
+  const OW_TERMS = ["tracer","mercy","genji","d.va"];
   const owSkins = skins.filter(s => OW_TERMS.some(t => s.name.toLowerCase().includes(t)));
   const chosen = owSkins.length >= 3 ? owSkins.slice(0,6) : skins.filter(s => s.rarity.toLowerCase() === "epic").slice(0,6);
   _overwatchBundleCache = {
     id: "bundle_overwatch",
     name: "Overwatch Bundle",
-    rarity: "Epic",
-    imageUrl: chosen[0]?.imageUrl ?? "",
+    rarity: "Gaming Legends",
+    imageUrl: "https://cdn.discordapp.com/attachments/1504485556325715980/1504535529474232391/fortnite-x-overwatch-all-skins-emotes-prices-full-showcase.jpg?ex=6a080027&is=6a06aea7&hm=053ee4016f3e9fe9a6d76caf5523140a0d1ea2bb899a50e150e7e8eb93a7716f&",
     price: BUNDLE_PRICE,
     isBundle: true,
     skins: chosen.map(s => ({ id: s.id, name: s.name, imageUrl: s.imageUrl })),
@@ -2901,8 +2916,17 @@ client.on("messageCreate", async (message) => {
 
 client.on("error", (err) => console.error("Discord client error:", err));
 
-const token = process.env.DISCORD_TOKEN || process.env.DISCORD_BOT_TOKEN;
-if (token) client.login(token).catch((err) => console.error("❌ Discord login failed:", err.message));
-else console.warn("⚠️ No DISCORD_TOKEN — Express server running but bot is offline.");
+async function start() {
+  try {
+    await initDB();
+    console.log("[data] PostgreSQL ready");
+  } catch (err) {
+    console.error("[data] Database init failed — data will not persist this session:", err.message);
+  }
+  const token = process.env.DISCORD_TOKEN || process.env.DISCORD_BOT_TOKEN;
+  if (token) client.login(token).catch((err) => console.error("❌ Discord login failed:", err.message));
+  else console.warn("⚠️ No DISCORD_TOKEN — Express server running but bot is offline.");
+}
+start();
 
 process.on("SIGTERM", () => { client.destroy(); process.exit(0); });
