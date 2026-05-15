@@ -15,9 +15,14 @@ const fs   = require("fs");
 const path = require("path");
 const pg   = require("pg");
 
+if (!process.env.DATABASE_URL) {
+  console.error("FATAL: DATABASE_URL is not set. The bot cannot start without a database — all V-Bucks and user data would be lost on every restart.");
+  process.exit(1);
+}
+
 const _pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false,
+  ssl: { rejectUnauthorized: false },
 });
 
 // ─────────────────────────────────────────────
@@ -30,6 +35,7 @@ let _db = {
   spawnChannels: {},
   coinflipChallenges: {},
   crewCodes: {},
+  pendingGifts: {},
 };
 
 // Debounced save — batches rapid writes into one DB round-trip
@@ -66,6 +72,7 @@ async function initDB() {
     if (stored.spawnChannels)      _db.spawnChannels      = stored.spawnChannels;
     if (stored.coinflipChallenges) _db.coinflipChallenges = stored.coinflipChallenges;
     if (stored.crewCodes)          _db.crewCodes          = stored.crewCodes;
+    if (stored.pendingGifts)       _db.pendingGifts       = stored.pendingGifts;
     console.log(`[data] Loaded ${Object.keys(_db.users).length} users from PostgreSQL`);
   } else {
     await _pool.query(
@@ -2970,7 +2977,11 @@ async function start() {
     await initDB();
     console.log("[data] PostgreSQL ready");
   } catch (err) {
-    console.error("[data] Database init failed — data will not persist this session:", err.message);
+    // FATAL: if we can't reach the DB we must not start. Continuing with an
+    // empty in-memory store means every restart wipes all user data silently.
+    console.error("[data] FATAL — Database init failed:", err.message);
+    console.error("[data] Check that DATABASE_URL is correct in Railway and the PostgreSQL service is running.");
+    process.exit(1);
   }
   const token = process.env.DISCORD_TOKEN || process.env.DISCORD_BOT_TOKEN;
   if (token) client.login(token).catch((err) => console.error("❌ Discord login failed:", err.message));
@@ -2978,24 +2989,32 @@ async function start() {
 }
 start();
 
-process.on("SIGTERM", async () => {
-  client.destroy();
-  // Flush any pending debounced save before the process exits
+async function flushAndExit(signal) {
+  console.log(`[data] ${signal} received — flushing save...`);
+  // Cancel any pending debounce timer so we don't double-write
   if (_saveTimer) {
     clearTimeout(_saveTimer);
     _saveTimer = null;
-    try {
-      await _pool.query(
-        `INSERT INTO bot_store (key, value, updated_at)
-         VALUES ($1, $2, NOW())
-         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
-        ["data", JSON.stringify(_db)]
-      );
-      console.log("[data] Final save on SIGTERM complete");
-    } catch (err) {
-      console.error("[data] Final save failed:", err.message);
-    }
   }
+  // ALWAYS do a final synchronous save regardless of whether the timer was
+  // pending. If the 300ms debounce already fired and a DB query is in-flight,
+  // this write will simply be a harmless duplicate — but if it wasn't saved
+  // yet, this guarantees the data survives the restart.
+  try {
+    await _pool.query(
+      `INSERT INTO bot_store (key, value, updated_at)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+      ["data", JSON.stringify(_db)]
+    );
+    console.log("[data] Final save complete.");
+  } catch (err) {
+    console.error("[data] Final save failed:", err.message);
+  }
+  client.destroy();
   await _pool.end().catch(() => {});
   process.exit(0);
-});
+}
+
+process.on("SIGTERM", () => flushAndExit("SIGTERM"));
+process.on("SIGINT",  () => flushAndExit("SIGINT"));
