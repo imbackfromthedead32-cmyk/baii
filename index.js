@@ -15,7 +15,10 @@ const fs   = require("fs");
 const path = require("path");
 const pg   = require("pg");
 
-const _pool = new pg.Pool();   // reads DATABASE_URL + PGSSL* from env automatically
+const _pool = new pg.Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false,
+});
 
 // ─────────────────────────────────────────────
 //  In-memory store (mirrors Postgres)
@@ -736,7 +739,7 @@ const STATIC_BUNDLES = [
     id: "bundle_eyekonic",
     name: "EYEKONIC Bundle",
     rarity: "Icon",
-    imageUrl: "https://cdn.discordapp.com/attachments/1504485556325715980/1504534511734755418/250701-eyekons-global-membership-is-officially-open-v0-wz97d3saEhaS8vrod4ixzNY0QxorUEbCSmRWHTpJiSg.jpg?ex=6a07ff34&is=6a06adb4&hm=1b7dda52f15c7f150c66f2e21185e371649d5457d70cb7aff616c2a0004dad92&",
+    imageUrl: "",
     price: BUNDLE_PRICE,
     isBundle: true,
     skins: [
@@ -752,7 +755,7 @@ const STATIC_BUNDLES = [
     id: "bundle_pinkyup",
     name: "PINKY UP Bundle",
     rarity: "Icon",
-    imageUrl: "https://cdn.discordapp.com/attachments/1504485556325715980/1504534511327772682/channels4_profile.jpg?ex=6a07ff34&is=6a06adb4&hm=ad77502395150f5fb7851507d58beff19a56bc3c357ff08fe881ae56c60132ed&",
+    imageUrl: "",
     price: BUNDLE_PRICE,
     isBundle: true,
     skins: [
@@ -778,7 +781,7 @@ async function getOverwatchBundle() {
     id: "bundle_overwatch",
     name: "Overwatch Bundle",
     rarity: "Epic",
-    imageUrl: "https://cdn.discordapp.com/attachments/1504485556325715980/1504535529474232391/fortnite-x-overwatch-all-skins-emotes-prices-full-showcase.jpg?ex=6a080027&is=6a06aea7&hm=053ee4016f3e9fe9a6d76caf5523140a0d1ea2bb899a50e150e7e8eb93a7716f&",
+    imageUrl: chosen[0]?.imageUrl ?? "",
     price: BUNDLE_PRICE,
     isBundle: true,
     skins: chosen.map(s => ({ id: s.id, name: s.name, imageUrl: s.imageUrl })),
@@ -2944,4 +2947,24 @@ async function start() {
 }
 start();
 
-process.on("SIGTERM", () => { client.destroy(); process.exit(0); });
+process.on("SIGTERM", async () => {
+  client.destroy();
+  // Flush any pending debounced save before the process exits
+  if (_saveTimer) {
+    clearTimeout(_saveTimer);
+    _saveTimer = null;
+    try {
+      await _pool.query(
+        `INSERT INTO bot_store (key, value, updated_at)
+         VALUES ($1, $2, NOW())
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+        ["data", JSON.stringify(_db)]
+      );
+      console.log("[data] Final save on SIGTERM complete");
+    } catch (err) {
+      console.error("[data] Final save failed:", err.message);
+    }
+  }
+  await _pool.end().catch(() => {});
+  process.exit(0);
+});
