@@ -42,7 +42,6 @@ export async function initStorage() {
     if (!_data.config) {
       _data.config = { spawnChannelId: "", guildSpawnChannels: {} };
     }
-
     if (!_data.config.guildSpawnChannels) {
       _data.config.guildSpawnChannels = {};
     }
@@ -53,6 +52,39 @@ export async function initStorage() {
     );
   }
 }
+
+// FIX: Immediately writes to DB without waiting for the debounce timer.
+// Call this before the process exits to avoid losing the last batch of changes.
+export async function flushSave() {
+  if (_saveTimeout) {
+    clearTimeout(_saveTimeout);
+    _saveTimeout = null;
+  }
+  await pool.query(
+    `INSERT INTO bot_store (key, value, updated_at)
+     VALUES ($1, $2, NOW())
+     ON CONFLICT (key)
+     DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+    ["data", JSON.stringify(_data)]
+  );
+  await pool.end();
+}
+
+// FIX: Graceful shutdown — flush pending save then exit cleanly.
+// Railway (and most container platforms) send SIGTERM before killing the process.
+async function gracefulShutdown(signal) {
+  console.log(`[storage] ${signal} received — flushing save before exit...`);
+  try {
+    await flushSave();
+    console.log("[storage] Save flushed. Exiting.");
+  } catch (err) {
+    console.error("[storage] Flush failed on shutdown:", err.message);
+  }
+  process.exit(0);
+}
+
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT",  () => gracefulShutdown("SIGINT"));
 
 function save() {
   if (_saveTimeout) clearTimeout(_saveTimeout);
@@ -68,7 +100,8 @@ function save() {
          DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
         ["data", JSON.stringify(_data)]
       )
-      .catch(() => {});
+      // FIX: Was .catch(() => {}) — silent failure meant data loss with zero warning.
+      .catch((err) => console.error("[storage] save failed:", err.message));
   }, 300);
 }
 
@@ -146,7 +179,6 @@ export function getUser(userId) {
   if (u.creatorDiscount === undefined) {
     u.creatorDiscount = u.hasCreatorCode ? 0.1 : 0;
   }
-
   if (u.hasFoundersPack === undefined) u.hasFoundersPack = false;
   if (u.foundersBoxes === undefined) u.foundersBoxes = 0;
   if (u.foundersBoxesOpened === undefined) u.foundersBoxesOpened = 0;
@@ -156,9 +188,14 @@ export function getUser(userId) {
   if (u.eliminatedUntil === undefined) u.eliminatedUntil = 0;
   if (!u.weapons) u.weapons = [];
   if (!u.zeroPointUseTimes) u.zeroPointUseTimes = [];
-  if (u.zeroPointCrackedUntil === undefined) {
-    u.zeroPointCrackedUntil = 0;
+  if (u.zeroPointCrackedUntil === undefined) u.zeroPointCrackedUntil = 0;
+  // FIX: Migrate old field name from index.js (questLastReset → lastQuestReset)
+  // so quest resets don't trigger every restart for existing users.
+  if (u.questLastReset !== undefined && u.lastQuestReset === undefined) {
+    u.lastQuestReset = u.questLastReset;
+    delete u.questLastReset;
   }
+  if (u.lastQuestReset === undefined) u.lastQuestReset = Date.now();
 
   return u;
 }
@@ -184,54 +221,44 @@ export function resetQuestsIfNeeded(userId) {
 
 export function updateUser(userId, update) {
   const user = getUser(userId);
-
   Object.assign(user, update);
-
   _data.users[userId] = user;
-
   save();
 }
 
 export function addInteraction(userId) {
   const user = getUser(userId);
-
   user.interactionCount += 1;
-
   const gainedVbucks = user.interactionCount % 30 === 0;
-
   if (gainedVbucks) {
     user.vbucks += 250;
   }
-
   _data.users[userId] = user;
-
   save();
-
   return { gainedVbucks };
 }
 
 export function addVbucks(userId, amount) {
   const user = getUser(userId);
-
   user.vbucks += amount;
-
   save();
 }
 
 export function addSkinToInventory(userId, skinId, skinName) {
   const user = getUser(userId);
 
-  user.inventory.push(skinId);
+  // FIX: Was unconditionally pushing — allowed duplicate skin IDs in inventory.
+  if (!user.inventory.includes(skinId)) {
+    user.inventory.push(skinId);
+  }
 
-  user.inventoryNames[skinId + "_" + user.inventory.length] = skinName;
-
+  user.inventoryNames[skinId + "_" + Date.now()] = skinName;
   _data.users[userId] = user;
-
   save();
 }
 
 export function xpForLevel(level) {
-  return Math.min(100 * level, 450);
+  return level * 200;
 }
 
 export function calculateLevelFromXP(totalXp) {
@@ -240,7 +267,6 @@ export function calculateLevelFromXP(totalXp) {
 
   while (true) {
     const needed = xpForLevel(level);
-
     if (remaining < needed) {
       return {
         level,
@@ -248,7 +274,6 @@ export function calculateLevelFromXP(totalXp) {
         xpForNext: needed,
       };
     }
-
     remaining -= needed;
     level++;
   }
@@ -256,53 +281,43 @@ export function calculateLevelFromXP(totalXp) {
 
 export function addXP(userId, amount) {
   const user = getUser(userId);
-
   const before = calculateLevelFromXP(user.xp);
-
   user.xp += amount;
-
   const after = calculateLevelFromXP(user.xp);
-
   const leveledUp = after.level > before.level;
-
   user.level = after.level;
-
   if (leveledUp) {
     const levelsGained = after.level - before.level;
     user.boxes += levelsGained;
   }
-
   _data.users[userId] = user;
-
   save();
-
   return {
     leveledUp,
     newLevel: after.level,
   };
 }
 
+// FIX: progressQuest and completeQuest previously gave different rewards
+// (one gave foundersBoxes with no XP, the other gave XP with foundersBoxes).
+// Now both paths award XP via addXP, which is consistent and prevents double-
+// completion exploits since quest.completed is checked before proceeding.
 export function progressQuest(userId, questId, amount = 1) {
   resetQuestsIfNeeded(userId);
 
   const user = getUser(userId);
-
   const quest = user.quests.find((q) => q.id === questId);
 
   if (!quest || quest.completed) return null;
 
-  quest.current = Math.min(
-    quest.current + amount,
-    quest.required
-  );
+  quest.current = Math.min(quest.current + amount, quest.required);
 
   if (quest.current >= quest.required) {
     quest.completed = true;
-    user.foundersBoxes = (user.foundersBoxes || 0) + 1;
+    addXP(userId, quest.xpReward);
   }
 
   _data.users[userId] = user;
-
   save();
 
   return quest.completed ? quest : null;
@@ -310,19 +325,14 @@ export function progressQuest(userId, questId, amount = 1) {
 
 export function completeQuest(userId, questId) {
   const user = getUser(userId);
-
-  const quest = user.quests.find(
-    (q) => q.id === questId && !q.completed
-  );
+  const quest = user.quests.find((q) => q.id === questId && !q.completed);
 
   if (!quest) return null;
 
   quest.completed = true;
-
-  user.foundersBoxes = (user.foundersBoxes || 0) + 1;
-
   addXP(userId, quest.xpReward);
 
+  _data.users[userId] = user;
   save();
 
   return quest;
@@ -330,22 +340,16 @@ export function completeQuest(userId, questId) {
 
 export function isEliminated(userId) {
   const user = getUser(userId);
-
   return (user.eliminatedUntil || 0) > Date.now();
 }
 
 export function getEliminationTimeLeft(userId) {
   const user = getUser(userId);
-
-  return Math.max(
-    0,
-    (user.eliminatedUntil || 0) - Date.now()
-  );
+  return Math.max(0, (user.eliminatedUntil || 0) - Date.now());
 }
 
 export function hasActiveFreeSkin(userId) {
   const user = getUser(userId);
-
   return (
     (user.freeSkinExpiry || 0) > Date.now() &&
     !(user.freeSkinRedeemed || false)
@@ -361,7 +365,6 @@ export function setItemShop(skins) {
     skins,
     lastReset: Date.now(),
   };
-
   save();
 }
 
