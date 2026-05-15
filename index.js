@@ -1701,20 +1701,71 @@ const commands = [
       const luck = user.activeLuck === "none" ? "None" : { normal: "🍀 Luck Potion (+15%)", xtra: "🔮 Xtra Luck Potion (+40%)", godly: "⚡ Godly Luck Potion (+80%)" }[user.activeLuck];
       const totalPages = Math.max(1, Math.ceil(names.length / 10));
       let page = 0;
+
       const buildInvPage = (p) => {
+        const cu = getUser(userId);
         const slice = names.slice(p*10, p*10+10);
         const lines = slice.map((name, i) => `${p*10+i+1}. **${name}**`);
-        const matInfo = user.buildCharges > 0 ? `${BUILD_MATS[user.buildMaterial]?.label ?? "🪵 Wood"} — ${user.buildCharges} charge${user.buildCharges !== 1 ? "s" : ""}` : "None";
-        const itemsSection = `**Items:**\n🍀 Luck: ${user.luckPotion||0} | 🔮 Xtra: ${user.xtraLuckPotion||0} | ⚡ Godly: ${user.godlyLuckPotion||0}\n🌟 God Chests: ${user.godChest||0} | 🔵 Mysterious: ${user.mysteriousChest||0}\n📦 Founders Boxes: ${user.foundersBoxes||0} | 🏗️ Build: ${matInfo}`;
-        const embed = new EmbedBuilder().setTitle(`🎒 ${interaction.user.username}'s Inventory`).setDescription((lines.length ? lines.join("\n")+"\n\n" : "*No skins yet.*\n\n")+itemsSection+`\n\n💰 **${user.infiniteVbucks ? "∞" : user.vbucks.toLocaleString()} V-Bucks** | ✨ Luck: **${luck}**`).setColor(0x00d4ff).setFooter({ text: `Page ${p+1} of ${totalPages} • ${names.length} skin(s)` }).setTimestamp();
-        const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`inv_prev`).setLabel("◀ Prev").setStyle(ButtonStyle.Secondary).setDisabled(p === 0), new ButtonBuilder().setCustomId(`inv_next`).setLabel("Next ▶").setStyle(ButtonStyle.Secondary).setDisabled(p >= totalPages-1));
-        return { embed, row };
+        const matInfo = cu.buildCharges > 0 ? `${BUILD_MATS[cu.buildMaterial]?.label ?? "🪵 Wood"} — ${cu.buildCharges} charge${cu.buildCharges !== 1 ? "s" : ""}` : "None";
+        const itemsSection = `**Items:**\n🍀 Luck: ${cu.luckPotion||0} | 🔮 Xtra: ${cu.xtraLuckPotion||0} | ⚡ Godly: ${cu.godlyLuckPotion||0}\n🌟 God Chests: ${cu.godChest||0} | 🔵 Mysterious: ${cu.mysteriousChest||0}\n📦 Founders Boxes: ${cu.foundersBoxes||0} | 🏗️ Build: ${matInfo}`;
+        const embed = new EmbedBuilder()
+          .setTitle(`🎒 ${interaction.user.username}'s Inventory`)
+          .setDescription((lines.length ? lines.join("\n")+"\n\n" : "*No skins yet.*\n\n") + itemsSection + `\n\n💰 **${cu.infiniteVbucks ? "∞" : cu.vbucks.toLocaleString()} V-Bucks** | ✨ Luck: **${luck}**`)
+          .setColor(0x00d4ff)
+          .setFooter({ text: `Page ${p+1} of ${totalPages} • ${names.length} skin(s)` })
+          .setTimestamp();
+
+        // Navigation row
+        const navRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId("inv_prev").setLabel("◀ Prev").setStyle(ButtonStyle.Secondary).setDisabled(p === 0),
+          new ButtonBuilder().setCustomId("inv_next").setLabel("Next ▶").setStyle(ButtonStyle.Secondary).setDisabled(p >= totalPages-1)
+        );
+
+        // Chest buttons row (only shown if user has any chests)
+        const hasGod  = (cu.godChest ?? 0) > 0;
+        const hasMyst = (cu.mysteriousChest ?? 0) > 0;
+        const chestRow = (hasGod || hasMyst) ? new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId("inv_open_god").setLabel(`🌟 Open God Chest (${cu.godChest ?? 0})`).setStyle(ButtonStyle.Success).setDisabled(!hasGod),
+          new ButtonBuilder().setCustomId("inv_open_myst").setLabel(`🔵 Open Mysterious Chest (${cu.mysteriousChest ?? 0})`).setStyle(ButtonStyle.Primary).setDisabled(!hasMyst)
+        ) : null;
+
+        const components = chestRow ? [navRow, chestRow] : [navRow];
+        return { embed, components };
       };
-      const { embed, row } = buildInvPage(0);
-      const msg = await interaction.reply({ embeds: [embed], components: [row], fetchReply: true });
+
+      const { embed, components } = buildInvPage(0);
+      const msg = await interaction.reply({ embeds: [embed], components, fetchReply: true });
       const collector = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 5*60*1000, filter: (b) => b.user.id === userId });
-      collector.on("collect", async (btn) => { if (btn.customId === "inv_prev") page = Math.max(0, page-1); else page = Math.min(totalPages-1, page+1); const { embed: _ie, row: _ir } = buildInvPage(page); await btn.update({ embeds: [_ie], components: [_ir] }); });
-      collector.on("end", async () => { const { embed: e } = buildInvPage(page); await interaction.editReply({ embeds: [e], components: [] }).catch(() => {}); });
+
+      collector.on("collect", async (btn) => {
+        if (btn.customId === "inv_prev") {
+          page = Math.max(0, page-1);
+          const { embed: e, components: c } = buildInvPage(page);
+          await btn.update({ embeds: [e], components: c });
+        } else if (btn.customId === "inv_next") {
+          page = Math.min(totalPages-1, page+1);
+          const { embed: e, components: c } = buildInvPage(page);
+          await btn.update({ embeds: [e], components: c });
+        } else if (btn.customId === "inv_open_god") {
+          await openGodChestInteraction(btn, userId);
+          // Refresh inventory view after a short delay
+          setTimeout(async () => {
+            const { embed: e, components: c } = buildInvPage(page);
+            await interaction.editReply({ embeds: [e], components: c }).catch(() => {});
+          }, 1500);
+        } else if (btn.customId === "inv_open_myst") {
+          await openMysteriousChestInteraction(btn, userId);
+          setTimeout(async () => {
+            const { embed: e, components: c } = buildInvPage(page);
+            await interaction.editReply({ embeds: [e], components: c }).catch(() => {});
+          }, 1500);
+        }
+      });
+
+      collector.on("end", async () => {
+        const { embed: e } = buildInvPage(page);
+        await interaction.editReply({ embeds: [e], components: [] }).catch(() => {});
+      });
     },
   },
 
