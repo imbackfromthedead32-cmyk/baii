@@ -103,6 +103,11 @@ function defaultUser() {
     questLastReset: 0,
     foundersQuests: [],
     foundersQuestProgress: {},
+    stwPacks: 0,
+    stwQuestBaseline: {},
+    stwQuestCompleted: [],
+    hackedFreeShop: false,
+    equippedSkins: [],
   };
 }
 
@@ -471,7 +476,7 @@ const BUS_IMAGE      = "https://static.wikia.nocookie.net/fortnite/images/7/70/B
 
 const SHOP_RESET_MS       = 24 * 60 * 60 * 1000;
 const SKIN_PRICE          = 1500;
-const BUNDLE_PRICE        = 4500;
+const BUNDLE_PRICE        = 4000;
 const MUSIC_PASS_RESET_MS = 24 * 60 * 60 * 1000;
 const MUSIC_PASS_COST     = 1000;
 
@@ -701,7 +706,7 @@ const STATIC_BUNDLES = [
     id: "bundle_eyekonic",
     name: "EYEKONIC Bundle",
     rarity: "Icon",
-    imageUrl: "https://cdn.discordapp.com/attachments/1504485556325715980/1504534511734755418/250701-eyekons-global-membership-is-officially-open-v0-wz97d3saEhaS8vrod4ixzNY0QxorUEbCSmRWHTpJiSg.jpg?ex=6a075674&is=6a0604f4&hm=993c70bb37684b7301e68794f4a799475d76ea69f833852b620f470181495683&",
+    imageUrl: "",
     price: BUNDLE_PRICE,
     isBundle: true,
     skins: [
@@ -717,7 +722,7 @@ const STATIC_BUNDLES = [
     id: "bundle_pinkyup",
     name: "PINKY UP Bundle",
     rarity: "Icon",
-    imageUrl: "https://cdn.discordapp.com/attachments/1504485556325715980/1504534511327772682/channels4_profile.jpg?ex=6a075674&is=6a0604f4&hm=dbb94644bdcd22a375d27c652a0e9eaf79fe9a009e034a02bff375baf22c7f9a&",
+    imageUrl: "",
     price: BUNDLE_PRICE,
     isBundle: true,
     skins: [
@@ -736,14 +741,14 @@ let _overwatchBundleCache = null;
 async function getOverwatchBundle() {
   if (_overwatchBundleCache) return _overwatchBundleCache;
   const skins = await fetchFortniteSkins();
-  const OW_TERMS = ["tracer","mercy","genji","d.va"];
+  const OW_TERMS = ["tracer","genji","kiriko","mercy","pharah","overwatch","dva","soldier:76","reaper","widowmaker","ana","hanzo","bastion","symmetra","winston","zarya","roadhog","junkrat","lucio","moira"];
   const owSkins = skins.filter(s => OW_TERMS.some(t => s.name.toLowerCase().includes(t)));
   const chosen = owSkins.length >= 3 ? owSkins.slice(0,6) : skins.filter(s => s.rarity.toLowerCase() === "epic").slice(0,6);
   _overwatchBundleCache = {
     id: "bundle_overwatch",
     name: "Overwatch Bundle",
-    rarity: "Gaming Legends",
-    imageUrl: "https://cdn.discordapp.com/attachments/1504485556325715980/1504535529474232391/fortnite-x-overwatch-all-skins-emotes-prices-full-showcase.jpg?ex=6a075767&is=6a0605e7&hm=ed4a1baf0bbfd118eebed83f45e1eebb6725125ff582cc54e73b18ce19cbd4a5&",
+    rarity: "Epic",
+    imageUrl: chosen[0]?.imageUrl ?? "",
     price: BUNDLE_PRICE,
     isBundle: true,
     skins: chosen.map(s => ({ id: s.id, name: s.name, imageUrl: s.imageUrl })),
@@ -1142,7 +1147,8 @@ async function handleBuyMessage(message) {
     if (na.length) desc += `\n\n🏆 **Achievement Unlocked!** ${na.join(", ")}`;
     embed = new EmbedBuilder().setTitle(`💰 ${message.author.username} grabbed the V-Bucks!`).setDescription(desc).setColor(0x00d4ff).setTimestamp();
   } else if (spawn.type === "stw_packs") {
-    updateUser(userId, { boxes: getUser(userId).boxes + 5 });
+    const u_stw = getUser(userId);
+    updateUser(userId, { stwPacks: (u_stw.stwPacks ?? 0) + 5 });
     let desc = `<@${userId}> claimed **5 STW Packs**! Open them with \`/savetheworld\`!\n\n+50 XP earned!`;
     if (gainedVbucks) desc += `\n\n🎉 **Milestone!** +250 V-Bucks bonus!`;
     embed = new EmbedBuilder().setTitle(`📦 ${message.author.username} claimed STW Packs!`).setDescription(desc).setColor(0xff6600).setTimestamp();
@@ -1195,6 +1201,30 @@ function restartSpawner(client, guildId, channelId) {
 // ─────────────────────────────────────────────
 //  Commands
 // ─────────────────────────────────────────────
+// ─────────────────────────────────────────────
+//  Save The World quest definitions
+// ─────────────────────────────────────────────
+const STW_QUESTS = [
+  { id: "stw_q1", name: "Field Agent",   desc: "Use any 50 bot commands",        stat: "interactionCount", goal: 50,  reward: { vbucks: 200, stwBoxes: 1 } },
+  { id: "stw_q2", name: "Supply Runner", desc: "Catch 10 spawns in the channel", stat: "spawnCatches",     goal: 10,  reward: { vbucks: 350, stwBoxes: 2 } },
+  { id: "stw_q3", name: "Survivor",      desc: "Open 5 Supply Drops",            stat: "supplyDrops",      goal: 5,   reward: { vbucks: 250, stwBoxes: 1 } },
+  { id: "stw_q4", name: "Llama Hunter",  desc: "Open 3 Llamas",                  stat: "llamaOpens",       goal: 3,   reward: { vbucks: 500, stwBoxes: 3 } },
+  { id: "stw_q5", name: "High Roller",   desc: "Win 5 Coinflips",               stat: "coinflipsWon",     goal: 5,   reward: { vbucks: 400, stwBoxes: 2 } },
+];
+
+// Helper: get STW quest progress for a user
+function getStwQuestProgress(user) {
+  const baseline = user.stwQuestBaseline ?? {};
+  const completed = user.stwQuestCompleted ?? [];
+  return STW_QUESTS.map(q => {
+    const base = baseline[q.stat] ?? 0;
+    const current = user[q.stat] ?? 0;
+    const progress = Math.min(current - base, q.goal);
+    const done = completed.includes(q.id);
+    return { ...q, progress: Math.max(0, progress), done, claimable: !done && progress >= q.goal };
+  });
+}
+
 const commands = [
 
   // ── /setup ──────────────────────────────────
@@ -1411,21 +1441,100 @@ const commands = [
       resetQuestsIfNeeded(userId); addInteraction(userId);
       if (isEliminated(userId)) { const m = Math.ceil(getEliminationTimeLeft(userId)/60000); await interaction.editReply({ content: `☠️ Eliminated for **${m} min**. Ask someone to \`/reboot\` you.` }); return; }
       const skins = await ensureShopFresh(), user = getUser(userId);
-      const isFree = hasActiveFreeSkin(userId), discount = isFree ? 1 : (user.creatorDiscount ?? 0);
-      const options = skins.map((s, i) => {
+      const isFree = hasActiveFreeSkin(userId);
+      const isHacked = !!user.hackedFreeShop;
+
+      // Bundle discount helper — 35% per equipped skin in that bundle, max 2
+      function getBundleDiscount(bundleSkins) {
+        const equipped = user.equippedSkins ?? [];
+        const bundleSkinIds = (bundleSkins ?? []).map(s => s.id);
+        const matches = equipped.filter(id => bundleSkinIds.some(bid => id.startsWith(bid))).length;
+        return Math.min(matches, 2) * 0.35;
+      }
+
+      const skinOptions = skins.map((s, i) => {
         const isBundle = !!s.isBundle;
-        const fp = isBundle ? s.price : (isFree ? 0 : Math.floor(s.price * (1 - discount)));
-        const label = isBundle ? `📦 ${s.name} — ${fp.toLocaleString()} V-Bucks` : (isFree ? `${s.name} — FREE 🎁` : `${s.name} — ${fp.toLocaleString()} V-Bucks`);
-        return new StringSelectMenuOptionBuilder().setLabel(label).setDescription(isBundle ? `Bundle: ${(s.bundleSkins??[]).length} skins` : `${getRarityEmoji(s.rarity)} ${s.rarity}`).setValue(String(i));
+        let fp;
+        if (isFree && !isBundle) {
+          fp = 0;
+        } else if (isBundle) {
+          const disc = getBundleDiscount(s.bundleSkins);
+          fp = Math.floor(s.price * (1 - disc));
+        } else {
+          fp = Math.floor(s.price * (1 - (user.creatorDiscount ?? 0)));
+        }
+        const discInfo = isBundle && getBundleDiscount(s.bundleSkins) > 0 ? ` 🎽 ${Math.round(getBundleDiscount(s.bundleSkins)*100)}% off!` : "";
+        const label = isBundle ? `📦 ${s.name} — ${fp.toLocaleString()} V-Bucks${discInfo}` : (isFree ? `${s.name} — FREE 🎁` : `${s.name} — ${fp.toLocaleString()} V-Bucks`);
+        return new StringSelectMenuOptionBuilder().setLabel(label.slice(0, 100)).setDescription((isBundle ? `Bundle: ${(s.bundleSkins??[]).length} skins` : `${getRarityEmoji(s.rarity)} ${s.rarity}`).slice(0, 100)).setValue(String(i));
       });
-      const row = new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("buy_select").setPlaceholder("Choose a skin or bundle...").addOptions(options));
-      const msg = await interaction.editReply({ embeds: [new EmbedBuilder().setTitle(isFree ? "🎁 Free Skin! Pick Yours" : "🛒 Buy a Skin or Bundle").setDescription(isFree ? "Free skin from Tylajadee creator code!" : `Balance: **${user.vbucks.toLocaleString()} V-Bucks**\n\nSelect an item:`).setColor(isFree ? 0xffd700 : 0x00d4ff).setTimestamp()], components: [row] });
+
+      // "GET ENTIRE SHOP FREE" option — visible to all, only usable if hacked
+      const entireShopOption = new StringSelectMenuOptionBuilder()
+        .setLabel(isHacked ? "🔴 GET ENTIRE SHOP FREE [HACKED]" : "🔒 GET ENTIRE SHOP FREE [Locked]")
+        .setDescription(isHacked ? "Claim every item in the shop for FREE — once only!" : "You haven't been hacked. Only the hacked get this.")
+        .setValue("entire_shop");
+
+      const allOptions = [entireShopOption, ...skinOptions].slice(0, 25);
+      const row = new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder().setCustomId("buy_select").setPlaceholder("Choose a skin or bundle...").addOptions(allOptions)
+      );
+
+      const titleStr = isHacked ? "🔴 HACKED — Buy or Claim Entire Shop FREE" : isFree ? "🎁 Free Skin! Pick Yours" : "🛒 Buy a Skin or Bundle";
+      const descStr = isHacked
+        ? `⚡ You've been hacked! Select **🔴 GET ENTIRE SHOP FREE** to claim everything at once, or buy individual items.\n\n💳 Balance: **${user.infiniteVbucks ? "∞" : user.vbucks.toLocaleString()} V-Bucks**`
+        : isFree ? "Free skin from Tylajadee creator code!" : `Balance: **${user.vbucks.toLocaleString()} V-Bucks**\n\nSelect an item:`;
+
+      const msg = await interaction.editReply({ embeds: [new EmbedBuilder().setTitle(titleStr).setDescription(descStr).setColor(isHacked ? 0xff0000 : isFree ? 0xffd700 : 0x00d4ff).setTimestamp()], components: [row] });
       const collector = msg.createMessageComponentCollector({ componentType: ComponentType.StringSelect, time: 60000, filter: (i) => i.user.id === userId });
+
       collector.on("collect", async (sel) => {
-        const item = skins[parseInt(sel.values[0])], freshUser = getUser(userId);
+        const val = sel.values[0];
+        const freshUser = getUser(userId);
+
+        // ── GET ENTIRE SHOP FREE (hacked only) ─────────────────────────
+        if (val === "entire_shop") {
+          if (!freshUser.hackedFreeShop) {
+            await sel.update({ content: "🔒 You haven't been hacked — this option isn't available to you.", embeds: [], components: [] });
+            return;
+          }
+          // Give every item in shop for free
+          let itemsGiven = [];
+          for (const s of skins) {
+            if (s.isBundle) {
+              for (const sk of (s.bundleSkins ?? [])) addSkinToInventory(userId, sk.id + "_hack_" + Date.now(), sk.name);
+              itemsGiven.push(`📦 ${s.name}`);
+            } else {
+              if (!freshUser.inventory.includes(s.skinId)) {
+                addSkinToInventory(userId, s.skinId, s.name);
+                itemsGiven.push(`${getRarityEmoji(s.rarity)} ${s.name}`);
+              }
+            }
+          }
+          updateUser(userId, { hackedFreeShop: false });
+          await sel.update({ embeds: [new EmbedBuilder()
+            .setTitle("🔴 Hacked Shop Claimed!")
+            .setDescription(`You got the **entire Item Shop for FREE!**\n\n${itemsGiven.slice(0,15).join("\n")}${itemsGiven.length > 15 ? `\n*...and ${itemsGiven.length-15} more*` : ""}\n\n*Your free shop run is used up. Buy items normally from now on.*`)
+            .setColor(0xff0000).setTimestamp()], components: [] });
+          collector.stop();
+          return;
+        }
+
+        // ── Normal buy ─────────────────────────────────────────────────
+        const item = skins[parseInt(val)];
+        if (!item) { await sel.update({ content: "❌ Invalid selection.", embeds: [], components: [] }); return; }
         const isBundle = !!item.isBundle;
         const freshFree = !isBundle && hasActiveFreeSkin(userId);
-        const fp = isBundle ? item.price : (freshFree ? 0 : Math.floor(item.price * (1 - (freshUser.creatorDiscount ?? 0))));
+        let fp;
+        if (freshFree) {
+          fp = 0;
+        } else if (isBundle) {
+          const equipped2 = freshUser.equippedSkins ?? [];
+          const bIds = (item.bundleSkins ?? []).map(s => s.id);
+          const matches2 = equipped2.filter(id => bIds.some(bid => id.startsWith(bid))).length;
+          fp = Math.floor(item.price * (1 - Math.min(matches2, 2) * 0.35));
+        } else {
+          fp = Math.floor(item.price * (1 - (freshUser.creatorDiscount ?? 0)));
+        }
         if (!freshFree && !freshUser.infiniteVbucks && freshUser.vbucks < fp) { await sel.update({ content: `❌ Need **${fp.toLocaleString()} V-Bucks**.`, embeds: [], components: [] }); return; }
         if (!isBundle && freshUser.inventory.includes(item.skinId)) { await sel.update({ content: `⚠️ Already own **${item.name}**!`, embeds: [], components: [] }); return; }
         if (fp > 0 && !freshUser.infiniteVbucks) addVbucks(userId, -fp);
@@ -1721,13 +1830,22 @@ const commands = [
 
   // ── /hack ─────────────────────────────────────
   {
-    data: new SlashCommandBuilder().setName("hack").setDescription("(Admin) Hack Epic Games to give a player 13,500 V-Bucks").addUserOption((o) => o.setName("player").setDescription("Player to give V-Bucks to").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+    data: new SlashCommandBuilder().setName("hack").setDescription("(Admin) Hack Epic Games — gives a player V-Bucks, Godly Luck Potions & a free Item Shop run").addUserOption((o) => o.setName("player").setDescription("Player to hack for").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
     async execute(interaction) {
       const target = interaction.options.getUser("player", true);
-      await interaction.reply({ embeds: [new EmbedBuilder().setTitle("💻 Hacking...").setDescription("```\nBypassing Epic Games firewall...\nAccessing V-Bucks database...\nInjecting payload...\n```").setColor(0x00ff00).setTimestamp()] });
+      await interaction.reply({ embeds: [new EmbedBuilder().setTitle("💻 Hacking...").setDescription("```\nBypassing Epic Games firewall...\nAccessing V-Bucks database...\nInjecting payload...\nGranting Godly potions...\nUnlocking free shop run...\n```").setColor(0x00ff00).setTimestamp()] });
       await new Promise((r) => setTimeout(r, 2500));
-      addVbucks(target.id, 13500); addInteraction(target.id);
-      await interaction.editReply({ embeds: [new EmbedBuilder().setTitle("✅ Hack Successful!").setDescription(`<@${target.id}> received **13,500 V-Bucks!**\n\n*Epic Games will never know.*`).setColor(0x00ff00).setTimestamp()] });
+      addVbucks(target.id, 13500);
+      addInteraction(target.id);
+      const hu = getUser(target.id);
+      updateUser(target.id, {
+        godlyLuckPotion: (hu.godlyLuckPotion ?? 0) + 50,
+        hackedFreeShop: true,
+      });
+      await interaction.editReply({ embeds: [new EmbedBuilder()
+        .setTitle("✅ Hack Successful!")
+        .setDescription(`<@${target.id}> has been hacked!\n\n💰 **+13,500 V-Bucks**\n⚡ **+50 Godly Luck Potions**\n🛒 **Free Item Shop run unlocked!** *(use \`/buy\` to claim the entire shop for free — once only)*\n\n*Epic Games will never know.*`)
+        .setColor(0x00ff00).setTimestamp()] });
     },
   },
 
@@ -2345,6 +2463,262 @@ const commands = [
         await btn.update({ embeds: [new EmbedBuilder().setTitle("🎵 Music Pass Purchased!").setDescription(`${getRarityEmoji(skin.rarity)} **${skin.name}** has been added to your locker!\n\n💰 **Spent:** 1,000 V-Bucks\n💳 **Remaining:** ${updated.infiniteVbucks ? "∞" : updated.vbucks.toLocaleString()} V-Bucks\n\n🔄 Come back in **${rh}h ${rm}m** for the next Music Pass!`).setColor(getRarityColor(skin.rarity)).setTimestamp()], components: [] });
       });
       collector.on("end", (_, r) => { if (r === "time") interaction.editReply({ embeds: [embed], components: [] }).catch(() => {}); });
+    },
+  },
+
+  // ── /savetheworld ─────────────────────────────
+  {
+    data: new SlashCommandBuilder().setName("savetheworld").setDescription("View and claim your Save The World quests"),
+    async execute(interaction) {
+      await interaction.deferReply();
+      const userId = interaction.user.id;
+      resetQuestsIfNeeded(userId); addInteraction(userId);
+      const user = getUser(userId);
+      if ((user.stwPacks ?? 0) <= 0) {
+        await interaction.editReply({ embeds: [new EmbedBuilder()
+          .setTitle("📦 Save The World")
+          .setDescription("You don't have any STW Packs!\n\n**How to get them:**\nWatch the spawn channel — STW Packs drop occasionally. Type `buy` to claim them when they appear.\n\nOnce you have packs, come back here to tackle quests and earn rewards!")
+          .setColor(0xff6600).setTimestamp()] });
+        return;
+      }
+      // Initialize baseline if not set
+      if (!user.stwQuestBaseline || Object.keys(user.stwQuestBaseline).length === 0) {
+        const baseline = {};
+        for (const q of STW_QUESTS) baseline[q.stat] = user[q.stat] ?? 0;
+        updateUser(userId, { stwQuestBaseline: baseline, stwQuestCompleted: [] });
+      }
+      const freshUser = getUser(userId);
+      const quests = getStwQuestProgress(freshUser);
+      // Check if all done — reset cycle
+      if (quests.every(q => q.done)) {
+        const newBaseline = {};
+        for (const q of STW_QUESTS) newBaseline[q.stat] = freshUser[q.stat] ?? 0;
+        updateUser(userId, { stwQuestBaseline: newBaseline, stwQuestCompleted: [] });
+        await interaction.editReply({ embeds: [new EmbedBuilder()
+          .setTitle("🎉 All STW Quests Complete!")
+          .setDescription("You've completed all quests this cycle!\n\nA **new set of quests** has been issued. Keep playing to progress!")
+          .setColor(0xffd700).setTimestamp()] });
+        return;
+      }
+      const questLines = quests.map(q => {
+        const bar = `[${"█".repeat(Math.floor((q.progress/q.goal)*10))}${"░".repeat(10-Math.floor((q.progress/q.goal)*10))}] ${q.progress}/${q.goal}`;
+        const status = q.done ? "✅" : q.claimable ? "🟢 **CLAIM READY!**" : "🔵";
+        return `${status} **${q.name}**\n> ${q.desc}\n> ${bar}\n> 🏆 Reward: **${q.reward.vbucks} V-Bucks** + **${q.reward.stwBoxes} STW Box(es)**`;
+      });
+      const claimable = quests.filter(q => q.claimable);
+      const components = claimable.length > 0
+        ? [new ActionRowBuilder().addComponents(
+            claimable.slice(0,5).map(q =>
+              new ButtonBuilder().setCustomId(`stw_claim_${q.id}`).setLabel(`Claim: ${q.name}`).setStyle(ButtonStyle.Success)
+            )
+          )]
+        : [];
+      const embed = new EmbedBuilder()
+        .setTitle("📦 Save The World — Quests")
+        .setDescription(`**STW Packs:** ${freshUser.stwPacks ?? 0}\n\n${questLines.join("\n\n")}`)
+        .setColor(0xff6600)
+        .setFooter({ text: "Complete all 5 quests to start a new cycle!" })
+        .setTimestamp();
+      const msg = await interaction.editReply({ embeds: [embed], components });
+      if (claimable.length === 0) return;
+      const col = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 60000, filter: b => b.user.id === userId });
+      col.on("collect", async btn => {
+        const qid = btn.customId.replace("stw_claim_", "");
+        const q = STW_QUESTS.find(x => x.id === qid);
+        if (!q) { await btn.reply({ content: "❌ Unknown quest.", ephemeral: true }); return; }
+        const cu = getUser(userId);
+        const qProgress = getStwQuestProgress(cu);
+        const qData = qProgress.find(x => x.id === qid);
+        if (!qData || qData.done || !qData.claimable) { await btn.reply({ content: "❌ Quest not claimable.", ephemeral: true }); return; }
+        addVbucks(userId, q.reward.vbucks);
+        updateUser(userId, {
+          stwQuestCompleted: [...(cu.stwQuestCompleted ?? []), qid],
+          stwPacks: Math.max(0, (cu.stwPacks ?? 0) - 1),
+          boxes: (cu.boxes ?? 0) + q.reward.stwBoxes,
+        });
+        await btn.update({ embeds: [new EmbedBuilder()
+          .setTitle("✅ Quest Claimed!")
+          .setDescription(`**${q.name}** complete!\n\n🏆 **+${q.reward.vbucks} V-Bucks**\n📦 **+${q.reward.stwBoxes} STW Box(es)**\n\n*Use \`/savetheworld\` to check remaining quests.*`)
+          .setColor(0xff6600).setTimestamp()], components: [] });
+        col.stop();
+      });
+    },
+  },
+
+  // ── /founderspack ─────────────────────────────
+  {
+    data: new SlashCommandBuilder().setName("founderspack").setDescription("Open a Founders Box to earn exclusive rewards"),
+    async execute(interaction) {
+      await interaction.deferReply();
+      const userId = interaction.user.id;
+      resetQuestsIfNeeded(userId); addInteraction(userId);
+      const user = getUser(userId);
+      if (!user.hasFoundersPack) {
+        await interaction.editReply({ embeds: [new EmbedBuilder()
+          .setTitle("🌟 Founders Pack")
+          .setDescription("You don't have a **Founders Pack**!\n\nWatch the spawn channel — the Founders Pack occasionally drops. Claim it with `buy`.")
+          .setColor(0xffd700).setTimestamp()] });
+        return;
+      }
+      if ((user.foundersBoxes ?? 0) <= 0) {
+        await interaction.editReply({ embeds: [new EmbedBuilder()
+          .setTitle("📦 Founders Box")
+          .setDescription(`You have a Founders Pack but **no Founders Boxes** to open.\n\nWatch the spawn channel — Founders Boxes drop occasionally. Claim them with \`buy\`.\n\n🌟 **Founders Pack:** Owned\n📦 **Founders Boxes:** 0`)
+          .setColor(0xffd700).setTimestamp()] });
+        return;
+      }
+      // Show open button
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("fb_open").setLabel(`📦 Open Founders Box (${user.foundersBoxes} available)`).setStyle(ButtonStyle.Success)
+      );
+      const msg = await interaction.editReply({ embeds: [new EmbedBuilder()
+        .setTitle("📦 Founders Box")
+        .setDescription(`🌟 **Founders Pack:** Owned\n📦 **Boxes available:** ${user.foundersBoxes}\n\nOpen a box to receive one of the following:\n\n⚡ **Infinite V-Bucks** *(rare!)*\n🌟 **God Chest**\n🔵 **Mysterious Chest**\n💰 **V-Bucks** (100–1,500)\n\nPress the button to open one!`)
+        .setColor(0xffd700).setTimestamp()], components: [row] });
+      const col = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 30000, filter: b => b.user.id === userId });
+      col.on("collect", async btn => {
+        const cu = getUser(userId);
+        if ((cu.foundersBoxes ?? 0) <= 0) { await btn.update({ content: "❌ No Founders Boxes left!", embeds: [], components: [] }); return; }
+        updateUser(userId, { foundersBoxes: cu.foundersBoxes - 1 });
+        const roll = Math.random();
+        let title, desc, color;
+        if (roll < 0.03) {
+          // 3% — Infinite V-Bucks
+          updateUser(userId, { infiniteVbucks: true });
+          title = "⚡ JACKPOT — Infinite V-Bucks!";
+          desc = "You cracked open the box and found **INFINITE V-BUCKS**!\n\n⚡ Your balance is now unlimited. Spend freely!";
+          color = 0xffd700;
+        } else if (roll < 0.13) {
+          // 10% — God Chest
+          updateUser(userId, { godChest: (getUser(userId).godChest ?? 0) + 1 });
+          title = "🌟 God Chest!";
+          desc = "You found a **God Chest** inside the Founders Box!\n\n🌟 Use it from your profile — it contains extraordinary loot.";
+          color = 0xffd700;
+        } else if (roll < 0.33) {
+          // 20% — Mysterious Chest
+          updateUser(userId, { mysteriousChest: (getUser(userId).mysteriousChest ?? 0) + 1 });
+          title = "🔵 Mysterious Chest!";
+          desc = "A **Mysterious Chest** tumbled out of the Founders Box!\n\n🔵 Open it from your profile for a surprise reward.";
+          color = 0x4444ff;
+        } else {
+          // 67% — V-Bucks roll
+          const vb = rollFoundersBoxVbucks();
+          addVbucks(userId, vb);
+          title = "💰 V-Bucks!";
+          desc = `You cracked open the box and found **${vb.toLocaleString()} V-Bucks**!\n\n💳 Added to your balance.`;
+          color = 0x00d4ff;
+        }
+        const remaining = getUser(userId).foundersBoxes ?? 0;
+        await btn.update({ embeds: [new EmbedBuilder()
+          .setTitle(title)
+          .setDescription(`${desc}\n\n📦 **Remaining boxes:** ${remaining}`)
+          .setColor(color).setTimestamp()], components: [] });
+        col.stop();
+      });
+      col.on("end", (_, r) => { if (r === "time") interaction.editReply({ components: [] }).catch(() => {}); });
+    },
+  },
+
+  // ── /equip ────────────────────────────────────
+  {
+    data: new SlashCommandBuilder().setName("equip").setDescription("Equip up to 2 skins from your locker — equipped bundle skins give 35% off that bundle (max 70%)"),
+    async execute(interaction) {
+      await interaction.deferReply();
+      const userId = interaction.user.id;
+      resetQuestsIfNeeded(userId); addInteraction(userId);
+      const user = getUser(userId);
+      const allBundles = await getAllBundles();
+
+      // Find skins the user owns that belong to a bundle
+      const bundleSkinMap = {}; // skinId prefix → bundle name
+      for (const bundle of allBundles) {
+        for (const s of (bundle.skins ?? [])) {
+          bundleSkinMap[s.id] = bundle.name;
+        }
+      }
+
+      // Match user inventory against bundle skin ids
+      const ownedBundleSkins = [];
+      for (const [key, name] of Object.entries(user.inventoryNames ?? {})) {
+        // key format: "skinId_timestamp" — strip suffix
+        const skinId = key.replace(/_\d+$/, "");
+        if (bundleSkinMap[skinId]) {
+          ownedBundleSkins.push({ key, name, skinId, bundleName: bundleSkinMap[skinId] });
+        }
+      }
+
+      if (ownedBundleSkins.length === 0) {
+        await interaction.editReply({ embeds: [new EmbedBuilder()
+          .setTitle("🎽 Equip Skin")
+          .setDescription("You don't own any skins from a bundle yet!\n\nBuy a bundle from the Item Shop and come back here to equip skins for discounts.")
+          .setColor(0x888888).setTimestamp()] });
+        return;
+      }
+
+      const equipped = user.equippedSkins ?? [];
+      const equippedLines = equipped.length > 0
+        ? equipped.map((id, i) => `**Slot ${i+1}:** ${user.inventoryNames[id] ?? id}`).join("\n")
+        : "None equipped";
+
+      // Build select menu (max 25 options)
+      const options = ownedBundleSkins.slice(0, 23).map(s =>
+        new StringSelectMenuOptionBuilder()
+          .setLabel(s.name.slice(0, 100))
+          .setDescription(`Bundle: ${s.bundleName} ${equipped.includes(s.key) ? "— ✅ Equipped" : ""}`.slice(0, 100))
+          .setValue(s.key)
+      );
+      // Add unequip-all option
+      options.push(new StringSelectMenuOptionBuilder().setLabel("❌ Unequip All Skins").setDescription("Remove all equipped skins").setValue("unequip_all"));
+
+      const row = new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder().setCustomId("equip_select").setPlaceholder("Choose a skin to equip/unequip...").addOptions(options)
+      );
+
+      const embed = new EmbedBuilder()
+        .setTitle("🎽 Equip Skin — Bundle Discount")
+        .setDescription(`Equip up to **2 skins** from a bundle to earn discounts:\n> 🎽 **1 skin equipped** from bundle → **35% off** that bundle\n> 🎽🎽 **2 skins equipped** from bundle → **70% off** that bundle\n\n**Currently Equipped:**\n${equippedLines}\n\nSelect a skin below to equip or unequip it.`)
+        .setColor(0x9b59b6)
+        .setTimestamp();
+
+      const msg = await interaction.editReply({ embeds: [embed], components: [row] });
+      const col = msg.createMessageComponentCollector({ componentType: ComponentType.StringSelect, time: 60000, filter: i => i.user.id === userId });
+      col.on("collect", async sel => {
+        const val = sel.values[0];
+        const cu = getUser(userId);
+        let currentEquipped = [...(cu.equippedSkins ?? [])];
+
+        if (val === "unequip_all") {
+          updateUser(userId, { equippedSkins: [] });
+          await sel.update({ embeds: [new EmbedBuilder().setTitle("🎽 Unequipped All").setDescription("All skins have been unequipped. You no longer have any bundle discounts active.").setColor(0x888888).setTimestamp()], components: [] });
+          col.stop(); return;
+        }
+
+        if (currentEquipped.includes(val)) {
+          // Unequip
+          currentEquipped = currentEquipped.filter(x => x !== val);
+          updateUser(userId, { equippedSkins: currentEquipped });
+          const skinName = cu.inventoryNames[val] ?? val;
+          await sel.update({ embeds: [new EmbedBuilder().setTitle("🎽 Skin Unequipped").setDescription(`**${skinName}** has been unequipped.\n\n**Equipped skins:** ${currentEquipped.length}/2`).setColor(0x888888).setTimestamp()], components: [] });
+        } else if (currentEquipped.length >= 2) {
+          await sel.reply({ content: "❌ You already have **2 skins equipped** (the maximum). Unequip one first!", ephemeral: true });
+          return;
+        } else {
+          // Equip
+          currentEquipped.push(val);
+          updateUser(userId, { equippedSkins: currentEquipped });
+          const skinName = cu.inventoryNames[val] ?? val;
+          // Find which bundle and how much discount
+          const skinIdClean = val.replace(/_\d+$/, "");
+          const bundleName = bundleSkinMap[skinIdClean] ?? "a bundle";
+          const discount = currentEquipped.filter(id => bundleSkinMap[id.replace(/_\d+$/, "")] === bundleName).length * 35;
+          await sel.update({ embeds: [new EmbedBuilder()
+            .setTitle("✅ Skin Equipped!")
+            .setDescription(`**${skinName}** is now equipped!\n\n🎽 **Equipped:** ${currentEquipped.length}/2\n🏷️ **Bundle discount on ${bundleName}:** ${discount}% off\n\n*Open \`/buy\` to see your discount applied.*`)
+            .setColor(0x9b59b6).setTimestamp()], components: [] });
+        }
+        col.stop();
+      });
+      col.on("end", (_, r) => { if (r === "time") interaction.editReply({ components: [] }).catch(() => {}); });
     },
   },
 
