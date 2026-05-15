@@ -76,6 +76,37 @@ async function initDB() {
   }
 }
 
+
+// ─────────────────────────────────────────────
+//  Graceful shutdown — flush pending save before exit
+// ─────────────────────────────────────────────
+// FIX: Railway (and most container platforms) send SIGTERM before killing the
+// process. Without this, the 300ms debounced save timer may never fire and
+// the last batch of writes is lost permanently on every restart/deploy.
+async function flushAndExit(signal) {
+  console.log(`[data] ${signal} received — flushing save before exit...`);
+  if (_saveTimer) {
+    clearTimeout(_saveTimer);
+    _saveTimer = null;
+    try {
+      await _pool.query(
+        `INSERT INTO bot_store (key, value, updated_at)
+         VALUES ($1, $2, NOW())
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+        ["data", JSON.stringify(_db)]
+      );
+      console.log("[data] Save flushed. Exiting.");
+    } catch (err) {
+      console.error("[data] Flush failed on shutdown:", err.message);
+    }
+  }
+  try { await _pool.end(); } catch {}
+  process.exit(0);
+}
+
+process.on("SIGTERM", () => flushAndExit("SIGTERM"));
+process.on("SIGINT",  () => flushAndExit("SIGINT"));
+
 function db() { return _db; }
 
 // ─────────────────────────────────────────────
