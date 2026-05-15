@@ -1,4 +1,4 @@
-// Fortnite Discord Bot — updated with SQLite data layer + bundles + new commands
+// Fortnit Discord Bot — updated with SQLite data layer + bundles + new commands
 require("dotenv").config();
 
 const {
