@@ -2823,7 +2823,7 @@ const commands = [
       const userId = interaction.user.id;
       const user = getUser(userId);
 
-      // ── Step 1: card not linked yet — show modal to enter card number ─────
+      // ── Step 1: card not linked yet ─────────────────────────────────────
       if (!user.cardLinked) {
         const modal = new ModalBuilder()
           .setCustomId("buyvbucks_card_modal")
@@ -2837,77 +2837,53 @@ const commands = [
         modal.addComponents(new ActionRowBuilder().addComponents(cardInput));
         await interaction.showModal(modal);
 
-        const submitted = await interaction.awaitModalSubmit({ time: 90_000 }).catch(() => null);
+        const submitted = await interaction.awaitModalSubmit({ time: 90000 }).catch(() => null);
         if (!submitted) return;
 
-        const entered = submitted.fields.getTextInputValue("card_number").trim().replace(/\s/g, "");
-        const correct = "6767-6767-6767".replace(/-/g, "");
-        if (entered.replace(/-/g, "") !== correct) {
+        const entered = submitted.fields.getTextInputValue("card_number").trim();
+        const correct = "6767-6767-6767";
+        if (entered.replace(/\s/g, "") !== correct.replace(/-/g, "") && entered !== correct) {
           await submitted.reply({
             embeds: [new EmbedBuilder()
               .setTitle("❌ Card Declined")
-              .setDescription("That card number is invalid. Epic Games cards use the format **XXXX-XXXX-XXXX**.
-
-Try again with `/buyvbucks`.")
+              .setDescription("That card number is invalid.\nEpic Games cards use the format **XXXX-XXXX-XXXX**.\n\nTry again with `/buyvbucks`.")
               .setColor(0xff0000).setTimestamp()],
             ephemeral: true,
           });
           return;
         }
 
-        // Show loading animation
         await submitted.deferReply({ ephemeral: true });
         await new Promise((r) => setTimeout(r, 2000));
         await submitted.editReply({
           embeds: [new EmbedBuilder()
             .setTitle("⏳ Linking Card...")
-            .setDescription("```
-Verifying card...
-Connecting to Epic Games servers...
-Authenticating...
-```")
+            .setDescription("```\nVerifying card...\nConnecting to Epic Games servers...\nAuthenticating...\n```")
             .setColor(0xffaa00).setTimestamp()],
         });
         await new Promise((r) => setTimeout(r, 2500));
 
-        updateUser(userId, { cardLinked: true, cardBalance: 1_000_000 });
+        updateUser(userId, { cardLinked: true, cardBalance: 1000000 });
 
         await submitted.editReply({
           embeds: [new EmbedBuilder()
             .setTitle("✅ Card Linked Successfully!")
-            .setDescription("Your **Epic Games card** has been linked to your account!
-
-💳 **Card balance:** 1,000,000 V-Bucks
-
-Run `/buyvbucks` again to purchase V-Bucks!
-
-⚠️ **WARNING: Do NOT enter your actual real-life card information. This is a game bot for entertainment purposes only.**")
+            .setDescription("Your **Epic Games card** has been linked!\n\n💳 **Card balance:** 1,000,000 V-Bucks\n\nRun `/buyvbucks` again to purchase V-Bucks!\n\n⚠️ **WARNING: Do NOT enter your real card information. This bot is for entertainment only.**")
             .setColor(0x00d4ff).setTimestamp()],
         });
         return;
       }
 
-      // ── Step 2: card linked — show V-Bucks purchase options ──────────────
+      // ── Step 2: card already linked — show purchase options ──────────────
       await interaction.deferReply({ ephemeral: true });
       const freshUser = getUser(userId);
-      const cardBal = freshUser.cardBalance ?? 1_000_000;
-
-      const VBUCKS_PACKAGES = [
-        { label: "1,000 V-Bucks",  amount: 1_000  },
-        { label: "2,800 V-Bucks",  amount: 2_800  },
-        { label: "5,000 V-Bucks",  amount: 5_000  },
-        { label: "13,500 V-Bucks", amount: 13_500 },
-        { label: "22,500 V-Bucks", amount: 22_500 },
-        { label: "55,000 V-Bucks", amount: 55_000 },
-      ];
+      const cardBal = freshUser.cardBalance ?? 1000000;
 
       if (cardBal <= 0) {
         await interaction.editReply({
           embeds: [new EmbedBuilder()
             .setTitle("💳 Card Empty")
-            .setDescription("Your Epic Games card has **0 V-Bucks** remaining.
-
-Use `/topup` with your employee ID to reload your card (max **1,000,000 V-Bucks**).")
+            .setDescription("Your Epic Games card has **0 V-Bucks** remaining.\n\nUse `/topup` with your employee ID to reload your card (max **1,000,000 V-Bucks**).")
             .setColor(0xff6600).setTimestamp()],
         });
         return;
@@ -2927,99 +2903,80 @@ Use `/topup` with your employee ID to reload your card (max **1,000,000 V-Bucks*
       const shopMsg = await interaction.editReply({
         embeds: [new EmbedBuilder()
           .setTitle("💳 Buy V-Bucks — Epic Games Card")
-          .setDescription(`Select how many V-Bucks you'd like to purchase:
-
-💳 **Card balance:** ${cardBal.toLocaleString()} V-Bucks
-
-⚠️ **Reminder: Do NOT use real card info on this bot. This is for entertainment only.**`)
+          .setDescription(`Select how many V-Bucks you'd like to purchase:\n\n💳 **Card balance:** ${cardBal.toLocaleString()} V-Bucks\n\n⚠️ **Reminder: This bot is for entertainment only. Do NOT use real card info.**`)
           .setColor(0x00d4ff).setTimestamp()],
         components: [row1, row2],
         fetchReply: true,
       });
 
       const amountMap = { bv_1000: 1000, bv_2800: 2800, bv_5000: 5000, bv_13500: 13500, bv_22500: 22500, bv_55000: 55000 };
-      const collector = shopMsg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 60_000, filter: (b) => b.user.id === userId });
+      const pkgCollector = shopMsg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 60000, filter: (b) => b.user.id === userId });
 
-      collector.on("collect", async (btn) => {
+      pkgCollector.on("collect", async (btn) => {
         const chosenAmount = amountMap[btn.customId];
         if (!chosenAmount) return;
-        collector.stop();
+        pkgCollector.stop();
 
         const latestUser = getUser(userId);
-        const latestBal = latestUser.cardBalance ?? 1_000_000;
+        const latestBal = latestUser.cardBalance ?? 1000000;
 
         if (chosenAmount > latestBal) {
           await btn.update({
             embeds: [new EmbedBuilder()
               .setTitle("❌ Insufficient Card Balance")
-              .setDescription(`You tried to buy **${chosenAmount.toLocaleString()} V-Bucks** but your card only has **${latestBal.toLocaleString()} V-Bucks** remaining.
-
-Use \`/topup\` to reload your card.`)
+              .setDescription(`You tried to buy **${chosenAmount.toLocaleString()} V-Bucks** but your card only has **${latestBal.toLocaleString()} V-Bucks** remaining.\n\nUse \`/topup\` to reload your card.`)
               .setColor(0xff0000).setTimestamp()],
             components: [],
           });
           return;
         }
 
-        // Show confirmation
         const confirmRow = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId("bv_confirm_yes").setLabel("✅ Yes, buy now").setStyle(ButtonStyle.Success),
-          new ButtonBuilder().setCustomId("bv_confirm_no").setLabel("❌ No, cancel").setStyle(ButtonStyle.Danger),
-          new ButtonBuilder().setCustomId("bv_confirm_gift").setLabel("🎁 Wanna Gift?").setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId("bv_yes").setLabel("✅ Yes, buy now").setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId("bv_no").setLabel("❌ No, cancel").setStyle(ButtonStyle.Danger),
+          new ButtonBuilder().setCustomId("bv_gift").setLabel("🎁 Wanna Gift?").setStyle(ButtonStyle.Secondary),
         );
 
         await btn.update({
           embeds: [new EmbedBuilder()
-            .setTitle(`💳 Confirm Purchase — ${chosenAmount.toLocaleString()} V-Bucks`)
-            .setDescription(`Are you sure you want to purchase **${chosenAmount.toLocaleString()} V-Bucks**?
-
-💳 **Card balance:** ${latestBal.toLocaleString()} V-Bucks
-📉 **After purchase:** ${(latestBal - chosenAmount).toLocaleString()} V-Bucks
-
-> This card has a maximum of **1,000,000 V-Bucks**. To top up, use \`/topup\` with your employee ID.`)
+            .setTitle(`💳 Confirm — ${chosenAmount.toLocaleString()} V-Bucks`)
+            .setDescription(`Are you sure you want to purchase **${chosenAmount.toLocaleString()} V-Bucks**?\n\n💳 **Card balance:** ${latestBal.toLocaleString()} V-Bucks\n📉 **After purchase:** ${(latestBal - chosenAmount).toLocaleString()} V-Bucks\n\n> This card has a maximum of **1,000,000 V-Bucks**. To top up, use \`/topup\`.`)
             .setColor(0xffaa00).setTimestamp()],
           components: [confirmRow],
         });
 
-        const confirmCollector = shopMsg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 60_000, filter: (b) => b.user.id === userId });
-        confirmCollector.on("collect", async (confirmBtn) => {
+        const confirmCollector = shopMsg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 60000, filter: (b) => b.user.id === userId });
+        confirmCollector.on("collect", async (cb) => {
           confirmCollector.stop();
 
-          if (confirmBtn.customId === "bv_confirm_no") {
-            await confirmBtn.update({
-              embeds: [new EmbedBuilder().setTitle("❌ Purchase Cancelled").setDescription("No V-Bucks were charged to your card.").setColor(0x888888).setTimestamp()],
-              components: [],
-            });
+          if (cb.customId === "bv_no") {
+            await cb.update({ embeds: [new EmbedBuilder().setTitle("❌ Purchase Cancelled").setDescription("No V-Bucks were charged to your card.").setColor(0x888888).setTimestamp()], components: [] });
             return;
           }
 
-          if (confirmBtn.customId === "bv_confirm_yes") {
+          if (cb.customId === "bv_yes") {
             const u = getUser(userId);
-            updateUser(userId, { cardBalance: (u.cardBalance ?? 1_000_000) - chosenAmount });
+            updateUser(userId, { cardBalance: Math.max(0, (u.cardBalance ?? 1000000) - chosenAmount) });
             addVbucks(userId, chosenAmount);
             const after = getUser(userId);
-            await confirmBtn.update({
+            await cb.update({
               embeds: [new EmbedBuilder()
                 .setTitle("✅ Purchase Successful!")
-                .setDescription(`**+${chosenAmount.toLocaleString()} V-Bucks** have been added to your balance!
-
-💰 **New V-Bucks balance:** ${after.infiniteVbucks ? "∞" : after.vbucks.toLocaleString()}
-💳 **Card balance remaining:** ${(after.cardBalance ?? 0).toLocaleString()} V-Bucks`)
+                .setDescription(`**+${chosenAmount.toLocaleString()} V-Bucks** added to your balance!\n\n💰 **New V-Bucks balance:** ${after.infiniteVbucks ? "∞" : after.vbucks.toLocaleString()}\n💳 **Card balance remaining:** ${(after.cardBalance ?? 0).toLocaleString()} V-Bucks`)
                 .setColor(0x00d4ff).setTimestamp()],
               components: [],
             });
             return;
           }
 
-          if (confirmBtn.customId === "bv_confirm_gift") {
-            // Show user select menu to pick gift recipient
+          if (cb.customId === "bv_gift") {
             const giftRow = new ActionRowBuilder().addComponents(
               new UserSelectMenuBuilder()
                 .setCustomId("bv_gift_user")
                 .setPlaceholder("Select a player to gift V-Bucks to...")
                 .setMinValues(1).setMaxValues(1)
             );
-            await confirmBtn.update({
+            await cb.update({
               embeds: [new EmbedBuilder()
                 .setTitle(`🎁 Gift ${chosenAmount.toLocaleString()} V-Bucks`)
                 .setDescription("Select who you want to send the V-Bucks to!")
@@ -3027,7 +2984,7 @@ Use \`/topup\` to reload your card.`)
               components: [giftRow],
             });
 
-            const giftCollector = shopMsg.createMessageComponentCollector({ componentType: ComponentType.UserSelect, time: 60_000, filter: (b) => b.user.id === userId });
+            const giftCollector = shopMsg.createMessageComponentCollector({ componentType: ComponentType.UserSelect, time: 60000, filter: (b) => b.user.id === userId });
             giftCollector.on("collect", async (sel) => {
               giftCollector.stop();
               const targetId = sel.values[0];
@@ -3040,15 +2997,13 @@ Use \`/topup\` to reload your card.`)
                 await sel.update({ embeds: [new EmbedBuilder().setTitle("❌ Insufficient card balance").setColor(0xff0000).setTimestamp()], components: [] });
                 return;
               }
-              updateUser(userId, { cardBalance: (u.cardBalance ?? 1_000_000) - chosenAmount });
+              updateUser(userId, { cardBalance: Math.max(0, (u.cardBalance ?? 1000000) - chosenAmount) });
               addVbucks(targetId, chosenAmount);
               const after = getUser(userId);
               await sel.update({
                 embeds: [new EmbedBuilder()
                   .setTitle("🎁 V-Bucks Gifted!")
-                  .setDescription(`You gifted **${chosenAmount.toLocaleString()} V-Bucks** to <@${targetId}>!
-
-💳 **Card balance remaining:** ${(after.cardBalance ?? 0).toLocaleString()} V-Bucks`)
+                  .setDescription(`You gifted **${chosenAmount.toLocaleString()} V-Bucks** to <@${targetId}>!\n\n💳 **Card balance remaining:** ${(after.cardBalance ?? 0).toLocaleString()} V-Bucks`)
                   .setColor(0xffd700).setTimestamp()],
                 components: [],
               });
@@ -3058,7 +3013,7 @@ Use \`/topup\` to reload your card.`)
         });
         confirmCollector.on("end", (_, r) => { if (r === "time") shopMsg.edit({ components: [] }).catch(() => {}); });
       });
-      collector.on("end", (_, r) => { if (r === "time") interaction.editReply({ components: [] }).catch(() => {}); });
+      pkgCollector.on("end", (_, r) => { if (r === "time") interaction.editReply({ components: [] }).catch(() => {}); });
     },
   },
 
@@ -3075,16 +3030,13 @@ Use \`/topup\` to reload your card.`)
         await interaction.reply({
           embeds: [new EmbedBuilder()
             .setTitle("❌ No Card Linked")
-            .setDescription("You haven't linked an Epic Games card yet.
-
-Use `/buyvbucks` to link your card first.")
+            .setDescription("You haven't linked an Epic Games card yet.\n\nUse `/buyvbucks` first to link your card.")
             .setColor(0xff0000).setTimestamp()],
           ephemeral: true,
         });
         return;
       }
 
-      // Show modal to enter employee ID
       const modal = new ModalBuilder()
         .setCustomId("topup_id_modal")
         .setTitle("🏢 Epic Games Employee Top-Up");
@@ -3097,7 +3049,7 @@ Use `/buyvbucks` to link your card first.")
       modal.addComponents(new ActionRowBuilder().addComponents(idInput));
       await interaction.showModal(modal);
 
-      const submitted = await interaction.awaitModalSubmit({ time: 90_000 }).catch(() => null);
+      const submitted = await interaction.awaitModalSubmit({ time: 90000 }).catch(() => null);
       if (!submitted) return;
 
       const enteredId = submitted.fields.getTextInputValue("employee_id").trim();
@@ -3105,9 +3057,7 @@ Use `/buyvbucks` to link your card first.")
         await submitted.reply({
           embeds: [new EmbedBuilder()
             .setTitle("❌ Invalid Employee ID")
-            .setDescription("That employee ID is not recognized in the Epic Games system.
-
-Double-check your ID and try `/topup` again.")
+            .setDescription("That employee ID is not recognized in the Epic Games system.\n\nDouble-check your ID and try `/topup` again.")
             .setColor(0xff0000).setTimestamp()],
           ephemeral: true,
         });
@@ -3118,82 +3068,49 @@ Double-check your ID and try `/topup` again.")
       await new Promise((r) => setTimeout(r, 1500));
 
       const currentBal = getUser(userId).cardBalance ?? 0;
-      const maxTopup = 1_000_000 - currentBal;
+      const maxAdd = 1000000 - currentBal;
 
-      if (maxTopup <= 0) {
+      if (maxAdd <= 0) {
         await submitted.editReply({
           embeds: [new EmbedBuilder()
             .setTitle("💳 Card Already Full")
-            .setDescription(`Your card is already at the maximum balance of **1,000,000 V-Bucks**.
-
-Spend some V-Bucks first, then top up again.`)
+            .setDescription("Your card is already at the maximum balance of **1,000,000 V-Bucks**.\n\nSpend some V-Bucks first, then top up again.")
             .setColor(0xff6600).setTimestamp()],
         });
         return;
       }
 
-      const TOPUP_OPTIONS = [
-        { label: "1,000 V-Bucks",   amount: 1_000   },
-        { label: "2,800 V-Bucks",   amount: 2_800   },
-        { label: "5,000 V-Bucks",   amount: 5_000   },
-        { label: "13,500 V-Bucks",  amount: 13_500  },
-        { label: "22,500 V-Bucks",  amount: 22_500  },
-        { label: "55,000 V-Bucks",  amount: 55_000  },
-      ].filter(o => o.amount <= maxTopup);
-
-      if (TOPUP_OPTIONS.length === 0) {
-        await submitted.editReply({
-          embeds: [new EmbedBuilder()
-            .setTitle("⚠️ Limited Space")
-            .setDescription(`Your card only has room for **${maxTopup.toLocaleString()} more V-Bucks** (max is **1,000,000**).
-
-Spend some V-Bucks to free up space, then top up.`)
-            .setColor(0xff6600).setTimestamp()],
-        });
-        return;
-      }
-
-      const topRow1 = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId("tu_1000").setLabel("1,000 V-Bucks").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId("tu_2800").setLabel("2,800 V-Bucks").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId("tu_5000").setLabel("5,000 V-Bucks").setStyle(ButtonStyle.Primary),
+      const tuRow1 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("tu_1000").setLabel("1,000 V-Bucks").setStyle(ButtonStyle.Primary).setDisabled(1000 > maxAdd),
+        new ButtonBuilder().setCustomId("tu_2800").setLabel("2,800 V-Bucks").setStyle(ButtonStyle.Primary).setDisabled(2800 > maxAdd),
+        new ButtonBuilder().setCustomId("tu_5000").setLabel("5,000 V-Bucks").setStyle(ButtonStyle.Primary).setDisabled(5000 > maxAdd),
       );
-      const topRow2 = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId("tu_13500").setLabel("13,500 V-Bucks").setStyle(ButtonStyle.Success)
-          .setDisabled(!TOPUP_OPTIONS.find(o => o.amount === 13_500)),
-        new ButtonBuilder().setCustomId("tu_22500").setLabel("22,500 V-Bucks").setStyle(ButtonStyle.Success)
-          .setDisabled(!TOPUP_OPTIONS.find(o => o.amount === 22_500)),
-        new ButtonBuilder().setCustomId("tu_55000").setLabel("55,000 V-Bucks").setStyle(ButtonStyle.Danger)
-          .setDisabled(!TOPUP_OPTIONS.find(o => o.amount === 55_000)),
+      const tuRow2 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("tu_13500").setLabel("13,500 V-Bucks").setStyle(ButtonStyle.Success).setDisabled(13500 > maxAdd),
+        new ButtonBuilder().setCustomId("tu_22500").setLabel("22,500 V-Bucks").setStyle(ButtonStyle.Success).setDisabled(22500 > maxAdd),
+        new ButtonBuilder().setCustomId("tu_55000").setLabel("55,000 V-Bucks").setStyle(ButtonStyle.Danger).setDisabled(55000 > maxAdd),
       );
 
       const topMsg = await submitted.editReply({
         embeds: [new EmbedBuilder()
           .setTitle("🏢 Epic Games Employee Top-Up")
-          .setDescription(`✅ **Employee ID verified!**
-
-How much would you like to top up?
-
-💳 **Current card balance:** ${currentBal.toLocaleString()} V-Bucks
-📈 **Max you can add:** ${maxTopup.toLocaleString()} V-Bucks`)
+          .setDescription(`✅ **Employee ID verified!**\n\nHow much would you like to top up?\n\n💳 **Current card balance:** ${currentBal.toLocaleString()} V-Bucks\n📈 **Max you can add:** ${maxAdd.toLocaleString()} V-Bucks`)
           .setColor(0x00d4ff).setTimestamp()],
-        components: [topRow1, topRow2],
+        components: [tuRow1, tuRow2],
         fetchReply: true,
       });
 
-      const topupAmountMap = { tu_1000: 1000, tu_2800: 2800, tu_5000: 5000, tu_13500: 13500, tu_22500: 22500, tu_55000: 55000 };
-      const tuCollector = topMsg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 60_000, filter: (b) => b.user.id === userId });
+      const tuAmountMap = { tu_1000: 1000, tu_2800: 2800, tu_5000: 5000, tu_13500: 13500, tu_22500: 22500, tu_55000: 55000 };
+      const tuCollector = topMsg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 60000, filter: (b) => b.user.id === userId });
 
       tuCollector.on("collect", async (btn) => {
-        const addAmount = topupAmountMap[btn.customId];
+        const addAmount = tuAmountMap[btn.customId];
         if (!addAmount) return;
         tuCollector.stop();
 
-        if (addAmount > maxTopup) {
-          await btn.update({
-            embeds: [new EmbedBuilder().setTitle("❌ Amount exceeds card limit").setDescription(`You can only add up to **${maxTopup.toLocaleString()} V-Bucks** to stay under the 1,000,000 maximum.`).setColor(0xff0000).setTimestamp()],
-            components: [],
-          });
+        const curBal = getUser(userId).cardBalance ?? 0;
+        if (addAmount > (1000000 - curBal)) {
+          await btn.update({ embeds: [new EmbedBuilder().setTitle("❌ Exceeds card limit").setDescription(`Adding **${addAmount.toLocaleString()} V-Bucks** would exceed the 1,000,000 maximum.`).setColor(0xff0000).setTimestamp()], components: [] });
           return;
         }
 
@@ -3205,33 +3122,25 @@ How much would you like to top up?
         await btn.update({
           embeds: [new EmbedBuilder()
             .setTitle(`💳 Confirm Top-Up — ${addAmount.toLocaleString()} V-Bucks`)
-            .setDescription(`Are you sure you want to add **${addAmount.toLocaleString()} V-Bucks** to your card?
-
-💳 **Current balance:** ${currentBal.toLocaleString()}
-📈 **After top-up:** ${(currentBal + addAmount).toLocaleString()} V-Bucks
-🔒 **Maximum allowed:** 1,000,000 V-Bucks`)
+            .setDescription(`Are you sure you want to add **${addAmount.toLocaleString()} V-Bucks** to your card?\n\n💳 **Current balance:** ${curBal.toLocaleString()} V-Bucks\n📈 **After top-up:** ${(curBal + addAmount).toLocaleString()} V-Bucks\n🔒 **Maximum:** 1,000,000 V-Bucks`)
             .setColor(0xffaa00).setTimestamp()],
           components: [confirmRow],
         });
 
-        const finalCollector = topMsg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 60_000, filter: (b) => b.user.id === userId });
-        finalCollector.on("collect", async (finalBtn) => {
+        const finalCollector = topMsg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 60000, filter: (b) => b.user.id === userId });
+        finalCollector.on("collect", async (fb) => {
           finalCollector.stop();
-          if (finalBtn.customId === "tu_no") {
-            await finalBtn.update({ embeds: [new EmbedBuilder().setTitle("❌ Top-Up Cancelled").setColor(0x888888).setTimestamp()], components: [] });
+          if (fb.customId === "tu_no") {
+            await fb.update({ embeds: [new EmbedBuilder().setTitle("❌ Top-Up Cancelled").setColor(0x888888).setTimestamp()], components: [] });
             return;
           }
           const u = getUser(userId);
-          const newBal = Math.min((u.cardBalance ?? 0) + addAmount, 1_000_000);
+          const newBal = Math.min((u.cardBalance ?? 0) + addAmount, 1000000);
           updateUser(userId, { cardBalance: newBal });
-          await finalBtn.update({
+          await fb.update({
             embeds: [new EmbedBuilder()
               .setTitle("✅ Card Topped Up!")
-              .setDescription(`**+${addAmount.toLocaleString()} V-Bucks** added to your Epic Games card!
-
-💳 **New card balance:** ${newBal.toLocaleString()} V-Bucks
-
-Use \`/buyvbucks\` to spend them!`)
+              .setDescription(`**+${addAmount.toLocaleString()} V-Bucks** added to your Epic Games card!\n\n💳 **New card balance:** ${newBal.toLocaleString()} V-Bucks\n\nUse \`/buyvbucks\` to spend them!`)
               .setColor(0x00d4ff).setTimestamp()],
             components: [],
           });
