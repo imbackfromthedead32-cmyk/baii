@@ -8,7 +8,6 @@ const {
   ChannelType, REST, Routes, ModalBuilder, TextInputBuilder, TextInputStyle,
   UserSelectMenuBuilder,
 } = require("discord.js");
-
 // ─────────────────────────────────────────────
 //  Data layer — PostgreSQL permanent storage
 // ─────────────────────────────────────────────
@@ -25,7 +24,6 @@ const _pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
 });
-
 // ─────────────────────────────────────────────
 //  In-memory store (mirrors Postgres)
 // ─────────────────────────────────────────────
@@ -85,7 +83,6 @@ async function initDB() {
 }
 
 function db() { return _db; }
-
 // ─────────────────────────────────────────────
 //  Default structures
 // ─────────────────────────────────────────────
@@ -171,7 +168,6 @@ function defaultStore() {
 
 // Top-level keys are pre-initialised in the _db default above; initDB() fills
 // them from Postgres before the bot logs in.
-
 // ─────────────────────────────────────────────
 //  XP helpers
 // ─────────────────────────────────────────────
@@ -187,7 +183,6 @@ function calculateLevelFromXP(xp) {
   }
   return level;
 }
-
 // ─────────────────────────────────────────────
 //  User helpers
 // ─────────────────────────────────────────────
@@ -218,7 +213,6 @@ function updateUser(userId, updates) {
 function getAllUsers() {
   return _db.users;
 }
-
 // ─────────────────────────────────────────────
 //  V-Bucks / XP
 // ─────────────────────────────────────────────
@@ -239,7 +233,6 @@ function addXP(userId, amount) {
   user.level = calculateLevelFromXP(user.xp);
   save();
 }
-
 // ─────────────────────────────────────────────
 //  Interactions / milestone
 // ─────────────────────────────────────────────
@@ -253,7 +246,6 @@ function addInteraction(userId) {
   save();
   return { gainedVbucks };
 }
-
 // ─────────────────────────────────────────────
 //  Inventory / locker
 // ─────────────────────────────────────────────
@@ -279,7 +271,6 @@ function getLocker(userId) {
     equipped: user.equippedSkin,
   };
 }
-
 // ─────────────────────────────────────────────
 //  Daily quests
 // ─────────────────────────────────────────────
@@ -318,7 +309,6 @@ function progressQuest(userId, questId) {
   }
   save();
 }
-
 // ─────────────────────────────────────────────
 //  Founders quests
 // ─────────────────────────────────────────────
@@ -358,7 +348,6 @@ function checkFoundersQuests(userId) {
   if (completed.length) save();
   return completed;
 }
-
 // ─────────────────────────────────────────────
 //  Elimination
 // ─────────────────────────────────────────────
@@ -371,7 +360,6 @@ function getEliminationTimeLeft(userId) {
   const user = getUser(userId);
   return Math.max(0, (user.eliminatedUntil || 0) - Date.now());
 }
-
 // ─────────────────────────────────────────────
 //  Free skin (creator code perk)
 // ─────────────────────────────────────────────
@@ -379,7 +367,6 @@ function hasActiveFreeSkin(userId) {
   const user = getUser(userId);
   return (user.freeSkinExpiry || 0) > Date.now() && !(user.freeSkinRedeemed || false);
 }
-
 // ─────────────────────────────────────────────
 //  Item Shop
 // ─────────────────────────────────────────────
@@ -391,7 +378,6 @@ function setItemShop(skins) {
   _db.itemShop = { skins, lastReset: Date.now() };
   save();
 }
-
 // ─────────────────────────────────────────────
 //  Pending Gifts
 // ─────────────────────────────────────────────
@@ -411,7 +397,6 @@ function deletePendingGift(recipientId) {
   delete _db.pendingGifts[recipientId];
   save();
 }
-
 // ─────────────────────────────────────────────
 //  Music Pass
 // ─────────────────────────────────────────────
@@ -437,7 +422,6 @@ function addMusicPassPurchaser(userId) {
 function isMusicPassPurchaser(userId) {
   return (_db.musicPass.purchasers || []).includes(userId);
 }
-
 // ─────────────────────────────────────────────
 //  Spawn channels
 // ─────────────────────────────────────────────
@@ -453,7 +437,6 @@ function setSpawnChannel(guildId, channelId) {
 function getAllGuildSpawnChannels() {
   return _db.spawnChannels || {};
 }
-
 // ─────────────────────────────────────────────
 //  Coinflip challenges
 // ─────────────────────────────────────────────
@@ -470,7 +453,6 @@ function deleteCoinflipChallenge(id) {
   delete _db.coinflipChallenges[id];
   save();
 }
-
 // ─────────────────────────────────────────────
 //  Crew codes
 // ─────────────────────────────────────────────
@@ -490,7 +472,6 @@ function redeemCrewCode(code, userId) {
     save();
   }
 }
-
 // ─────────────────────────────────────────────
 //  Express keep-alive
 // ─────────────────────────────────────────────
@@ -501,7 +482,6 @@ app.use("/skins", express.static(path.join(__dirname)));
 const PORT = process.env.PORT || 3000;
 app.get("/check", (_req, res) => res.json({ status: "ok", timestamp: new Date().toISOString() }));
 app.listen(PORT, () => console.log(`Express server on port ${PORT}`));
-
 // ─────────────────────────────────────────────
 //  Constants / Images
 // ─────────────────────────────────────────────
@@ -520,7 +500,6 @@ const SKIN_PRICE          = 1500;
 const BUNDLE_PRICE        = 4000;
 const MUSIC_PASS_RESET_MS = 24 * 60 * 60 * 1000;
 const MUSIC_PASS_COST     = 1000;
-
 // ─────────────────────────────────────────────
 //  Fortnite data — weapons
 // ─────────────────────────────────────────────
@@ -550,7 +529,6 @@ function getWeaponByName(name) {
 function randomWeapon() { return FORTNITE_WEAPONS[Math.floor(Math.random() * FORTNITE_WEAPONS.length)]; }
 
 const RARITY_WEIGHTS = { legendary: 5, epic: 10, rare: 20, uncommon: 30, common: 35 };
-
 // ─────────────────────────────────────────────
 //  Fortnite data — fishing
 // ─────────────────────────────────────────────
@@ -568,7 +546,6 @@ function weightedFish() {
   const total = FISH_TABLE.reduce((a,b)=>a+b.weight,0); let r = Math.random()*total;
   for (const f of FISH_TABLE) { r -= f.weight; if (r<=0) return f; } return FISH_TABLE[0];
 }
-
 // ─────────────────────────────────────────────
 //  Fortnite data — misc
 // ─────────────────────────────────────────────
@@ -628,7 +605,6 @@ const DAILY_QUESTS = [
 const LUCK_BOOST = { none: 0, normal: 15, xtra: 40, godly: 80 };
 function boostedChance(base, luck) { return Math.min(base + (LUCK_BOOST[luck] || 0), 99); }
 function roll(pct) { return Math.random() * 100 < pct; }
-
 // ─────────────────────────────────────────────
 //  Founders quests pool
 // ─────────────────────────────────────────────
@@ -653,7 +629,6 @@ const FOUNDERS_QUEST_POOL = [
   { id: "duel_someone",   label: "Challenge someone to duel", stat: "duelsPlayed",     required: 1    },
   { id: "build_up",       label: "Build a structure",         stat: "timesBuilt",      required: 1    },
 ];
-
 // ─────────────────────────────────────────────
 //  Achievements (defined here so local functions can reference them)
 // ─────────────────────────────────────────────
@@ -716,7 +691,6 @@ function awardAchievement(userId, achId) {
 function buildAchievementEmbed(ach) {
   return new EmbedBuilder().setTitle(`${ach.emoji} Achievement Unlocked!`).setDescription(`**${ach.title}**\n*${ach.description}*`).setColor(0xf4a01a).setTimestamp();
 }
-
 // ─────────────────────────────────────────────
 //  Custom Skins
 // ─────────────────────────────────────────────
@@ -738,7 +712,6 @@ const CUSTOM_SKINS = [
   { id:"custom_daniela_pinkyup",  name:"Daniela (PINKY UP)",  description:"Us against the world shake and shake in the parking lot.", rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1504292276845940848/Screenshot_20260514_011145_CapCut-removebg-preview.png?ex=6a0674db&is=6a05235b&hm=2f6199f81e1076c6af712197fbc5b8c2c7983dc92c5a2799a6bdcaf8b8117b97&", isStw:false, isCustom:true },
   { id:"custom_megan_pinkyup",    name:"Megan (PINKY UP)",    description:"No can touch em if they tried.",              rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1504292277160382554/Screenshot_20260514_011243_CapCut-removebg-preview.png?ex=6a0674db&is=6a05235b&hm=2bf017ff773b8411a75b2d2f0c0fa2bf95d377217759f275d94d4df7d50e8ca1&", isStw:false, isCustom:true },
 ];
-
 // ─────────────────────────────────────────────
 //  Bundles — 25% spawn chance
 // ─────────────────────────────────────────────
@@ -803,7 +776,6 @@ async function getAllBundles() {
 function getBundleById(id) {
   return STATIC_BUNDLES.find(b => b.id === id) ?? null;
 }
-
 // ─────────────────────────────────────────────
 //  Skin API
 // ─────────────────────────────────────────────
@@ -884,7 +856,6 @@ function generateCrewCode() {
   const seg = () => Array.from({length:4}, () => chars[Math.floor(Math.random()*chars.length)]).join("");
   return `${seg()}-${seg()}-${seg()}-${seg()}`;
 }
-
 // ─────────────────────────────────────────────
 //  Music Pass (async, uses data.js for storage)
 // ─────────────────────────────────────────────
@@ -897,7 +868,6 @@ async function getMusicPass() {
   setMusicPass(skin);
   return skin;
 }
-
 // ─────────────────────────────────────────────
 //  Shop helpers
 // ─────────────────────────────────────────────
@@ -913,7 +883,6 @@ function getTimeUntilReset() {
   const msLeft = Math.max(0, SHOP_RESET_MS - (Date.now() - getItemShop().lastReset));
   return `${Math.floor(msLeft/3600000)}h ${Math.floor((msLeft%3600000)/60000)}m`;
 }
-
 // ─────────────────────────────────────────────
 //  Chest helpers
 // ─────────────────────────────────────────────
@@ -968,7 +937,6 @@ function rollFoundersBoxVbucks() {
   const total = FOUNDERS_BOX_TIERS.reduce((a,b) => a+b.weight, 0); let r = Math.random()*total;
   for (const t of FOUNDERS_BOX_TIERS) { r -= t.weight; if (r <= 0) return t.amount; } return 100;
 }
-
 // ─────────────────────────────────────────────
 //  Spawn system
 // ─────────────────────────────────────────────
@@ -1142,7 +1110,6 @@ async function spawnCrew(client, guildId, channelId) {
     return true;
   } catch { return false; }
 }
-
 // ─────────────────────────────────────────────
 //  handleBuyMessage
 // ─────────────────────────────────────────────
@@ -1238,7 +1205,6 @@ function restartSpawner(client, guildId, channelId) {
   delete activeSpawns[guildId];
   scheduleNextSpawn(client, guildId, channelId);
 }
-
 // ─────────────────────────────────────────────
 //  Commands
 // ─────────────────────────────────────────────
@@ -1265,14 +1231,11 @@ function getStwQuestProgress(user) {
     return { ...q, progress: Math.max(0, progress), done, claimable: !done && progress >= q.goal };
   });
 }
-
-
 // ─────────────────────────────────────────────
 // LIVE + COINS SYSTEM
 // ─────────────────────────────────────────────
 const activeLives = new Map();
 const treasureChests = new Map();
-
 // ─────────────────────────────────────────────
 // TIKTOK STYLE GIFT SYSTEM
 // ─────────────────────────────────────────────
@@ -1570,7 +1533,7 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
 },
 
 // ── /endlive
- ─────────────────────────────────
+// ─────────────────────────────────
 {
   data: new SlashCommandBuilder()
     .setName("endlive")
@@ -3595,7 +3558,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 ];
-
 // ─────────────────────────────────────────────
 //  Command registration + Discord client
 // ─────────────────────────────────────────────
@@ -3656,8 +3618,7 @@ client.on("interactionCreate", async (interaction) => {
       if (GIFT_IMAGE_URL) giftEmbed.setImage(GIFT_IMAGE_URL);
       await interaction.channel.send({ content: `<@${interaction.user.id}>`, embeds: [giftEmbed] }).catch(() => {});
     }
-    // ──────────────────────────────────────────────────────────────────────
-
+// ──────────────────────────────────────────────────────────────────────
     const cmd = commandMap.get(interaction.commandName);
     if (!cmd) return;
     await cmd.execute(interaction);
@@ -3702,7 +3663,7 @@ client.on("messageCreate", async (message) => {
         .setTimestamp()],
     }).catch(console.error);
   }
-  // ──────────────────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────
 });
 
 client.on("error", (err) => console.error("Discord client error:", err));
