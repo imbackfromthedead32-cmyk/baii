@@ -1,4 +1,4 @@
-// Fortit Discord Bot — updated with SQLite data layer + bundles + new commands
+// FortitOpeners — updated with SQLite data layer + bundles + new commands
 require("dotenv").config();
 
 const {
@@ -3638,3 +3638,170 @@ client.on("interactionCreate", async interaction => {
     ephemeral: true
   });
 });
+
+
+// ===== FINAL FIX PATCH =====
+
+// ================================
+// FIXED LIVE GIFTS DATABASE
+// ================================
+
+const LIVE_GIFTS = {
+  tiktokstars: { name: "TikTok Stars", coins: 39999, emoji: "⭐" },
+  universe: { name: "TikTok Universe", coins: 44999, emoji: "🌌" },
+  lion: { name: "Lion", coins: 29999, emoji: "🦁" },
+  pegasus: { name: "Pegasus", coins: 42999, emoji: "🪽" },
+  firephoenix: { name: "Fire Phoenix", coins: 41999, emoji: "🔥" },
+  thunderfalcon: { name: "Thunder Falcon", coins: 39999, emoji: "🦅" },
+  flyingjets: { name: "Flying Jets", coins: 5000, emoji: "✈️" },
+  leonkitten: { name: "Leon The Kitten", coins: 4888, emoji: "🐱" },
+  galaxy: { name: "Galaxy", coins: 1000, emoji: "🌠" },
+  motorcycle: { name: "Motorcycle", coins: 2988, emoji: "🏍️" },
+  train: { name: "Train", coins: 899, emoji: "🚂" },
+  partyonon: { name: "Party On&On", coins: 15000, emoji: "🎉" },
+  privatejet: { name: "Private Jet", coins: 4888, emoji: "🛩️" }
+};
+
+// ================================
+// FIXED TREASURE CHESTS
+// ================================
+
+const treasureChests = new Map();
+
+client.on("interactionCreate", async interaction => {
+
+  if (!interaction.isButton()) return;
+
+  if (!interaction.customId.startsWith("openchest_")) return;
+
+  const chestId = interaction.customId.replace("openchest_", "");
+
+  const chest = treasureChests.get(chestId);
+
+  if (!chest) {
+    return interaction.reply({
+      content: "❌ This chest expired.",
+      ephemeral: true
+    });
+  }
+
+  if (Date.now() < chest.unlockTime) {
+    const remaining = Math.ceil(
+      (chest.unlockTime - Date.now()) / 1000
+    );
+
+    return interaction.reply({
+      content: `⏳ Unlocks in ${remaining}s`,
+      ephemeral: true
+    });
+  }
+
+  if (chest.claimed.includes(interaction.user.id)) {
+    return interaction.reply({
+      content: "❌ You already opened this chest.",
+      ephemeral: true
+    });
+  }
+
+  if (chest.claimed.length >= chest.maxPeople) {
+    return interaction.reply({
+      content: "❌ The chest is empty.",
+      ephemeral: true
+    });
+  }
+
+  chest.claimed.push(interaction.user.id);
+
+  if (Math.random() <= 0.02) {
+    return interaction.reply({
+      content: "📦 The chest was empty...",
+      ephemeral: true
+    });
+  }
+
+  let reward = Math.floor(
+    chest.remaining /
+    (chest.maxPeople - chest.claimed.length + 1)
+  );
+
+  if (Math.random() <= 0.005) {
+    reward = chest.remaining;
+  }
+
+  chest.remaining -= reward;
+
+  addCoins(interaction.user.id, reward);
+
+  return interaction.reply({
+    content: `🪙 You got ${reward.toLocaleString()} coins!`,
+    ephemeral: true
+  });
+});
+
+// ================================
+// FIXED /TREASURECHEST COMMAND
+// ================================
+
+{
+  data: new SlashCommandBuilder()
+    .setName("treasurechest")
+    .setDescription("Create a treasure chest")
+    .addIntegerOption(option =>
+      option
+        .setName("coins")
+        .setDescription("Total coins")
+        .setRequired(true)
+    )
+    .addIntegerOption(option =>
+      option
+        .setName("people")
+        .setDescription("How many can open")
+        .setRequired(true)
+    )
+    .addIntegerOption(option =>
+      option
+        .setName("seconds")
+        .setDescription("Unlock time")
+        .setRequired(true)
+    ),
+
+  async execute(interaction) {
+
+    const coins = interaction.options.getInteger("coins");
+    const people = interaction.options.getInteger("people");
+    const seconds = interaction.options.getInteger("seconds");
+
+    const chestId = `${Date.now()}_${interaction.user.id}`;
+
+    treasureChests.set(chestId, {
+      remaining: coins,
+      maxPeople: people,
+      claimed: [],
+      unlockTime: Date.now() + (seconds * 1000)
+    });
+
+    const embed = new EmbedBuilder()
+      .setTitle("🪙 Treasure Chest")
+      .setDescription(
+        `Coins: **${coins.toLocaleString()}**\n` +
+        `Openers: **0/${people}**\n` +
+        `Unlocks in: <t:${Math.floor((Date.now() + seconds * 1000)/1000)}:R>`
+      )
+      .setThumbnail(
+        "https://cdn.discordapp.com/attachments/1247303459359690805/1505279164289388544/Fx_CoinChest.webp"
+      )
+      .setColor(0xffd700);
+
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`openchest_${chestId}`)
+        .setLabel("🪙 Open Chest")
+        .setStyle(ButtonStyle.Success)
+    );
+
+    await interaction.reply({
+      embeds: [embed],
+      components: [row]
+    });
+  }
+}
