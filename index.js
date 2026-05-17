@@ -3315,3 +3315,327 @@ async function flushAndExit(signal) {
 
 process.on("SIGTERM", () => flushAndExit("SIGTERM"));
 process.on("SIGINT",  () => flushAndExit("SIGINT"));
+
+
+// ─────────────────────────────────────────────
+//  TikTok Live / Coins / Treasure Chest System
+// ─────────────────────────────────────────────
+if (!_db.liveSystem) {
+  _db.liveSystem = {
+    activeLives: {},
+    agencyLives: {},
+    treasureChests: {},
+    cooldowns: {},
+    agencyMembers: {},
+    enteredLives: {},
+  };
+}
+
+const CHEST_IMAGE = "https://cdn.discordapp.com/attachments/1247303459359690805/1505279164289388544/Fx_CoinChest.webp";
+const STREAM_GIFTS = [
+  { id: "tiktok_universe", name: "TikTok Universe", coins: 35000, icon: "🌌" },
+  { id: "lion", name: "Lion", coins: 29999, icon: "🦁" },
+  { id: "leon_kitten", name: "Leon The Kitten", coins: 12000, icon: "🐱" },
+  { id: "flying_jet", name: "Flying Jet", coins: 5000, icon: "✈️" },
+  { id: "tiktok_stars", name: "TikTok Stars", coins: 1000, icon: "⭐" },
+  { id: "tiktok_house", name: "TikTok House", coins: 500, icon: "🏠" },
+];
+
+function ensureEconomy(userId) {
+  const user = getUser(userId);
+  if (typeof user.coins !== "number") user.coins = 0;
+  if (!Array.isArray(user.liveHistory)) user.liveHistory = [];
+  if (!user.agencyData) user.agencyData = {
+    joined: false,
+    lastAgencyLive: 0,
+    bannedUntil: 0,
+    agency: null,
+  };
+  save();
+  return user;
+}
+
+function addCoins(userId, amount) {
+  const user = ensureEconomy(userId);
+  user.coins = Math.max(0, (user.coins || 0) + amount);
+  save();
+}
+
+function removeCoins(userId, amount) {
+  addCoins(userId, -Math.abs(amount));
+}
+
+const EXTRA_COMMANDS = [
+  new SlashCommandBuilder().setName("treasurechest").setDescription("Create a community treasure chest")
+    .addIntegerOption(o => o.setName("coins").setDescription("Total coins").setRequired(true))
+    .addIntegerOption(o => o.setName("people").setDescription("How many can open").setRequired(true))
+    .addIntegerOption(o => o.setName("minutes").setDescription("How long it lasts").setRequired(true)),
+  new SlashCommandBuilder().setName("golive").setDescription("Start a live")
+    .addStringOption(o => o.setName("title").setDescription("Live title").setRequired(true)),
+  new SlashCommandBuilder().setName("agencylive").setDescription("Start a 30 minute agency live")
+    .addStringOption(o => o.setName("title").setDescription("Live title").setRequired(true)),
+  new SlashCommandBuilder().setName("enterlive").setDescription("Enter somebody's live")
+    .addUserOption(o => o.setName("creator").setDescription("Creator").setRequired(true)),
+  new SlashCommandBuilder().setName("coingift").setDescription("Send a gift to a live")
+    .addUserOption(o => o.setName("creator").setDescription("Creator").setRequired(true))
+    .addStringOption(o => o.setName("gift").setDescription("Gift name").setRequired(true)
+      .addChoices(...STREAM_GIFTS.map(g => ({ name: g.name, value: g.id })))),
+  new SlashCommandBuilder().setName("joinagency").setDescription("Join Impact Agency"),
+  new SlashCommandBuilder().setName("endlive").setDescription("End your live early"),
+];
+
+if (typeof commands !== "undefined") {
+  for (const c of EXTRA_COMMANDS) commands.push(c);
+}
+
+client.on("interactionCreate", async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+
+  if (interaction.commandName === "joinagency") {
+    const user = ensureEconomy(interaction.user.id);
+    if (user.vbucks < 10000) {
+      return interaction.reply({ content: "❌ You need at least 10,000 V-Bucks to join Impact Agency.", ephemeral: true });
+    }
+    if (Date.now() < (user.agencyData.bannedUntil || 0)) {
+      return interaction.reply({ content: "❌ You are temporarily banned from rejoining an agency.", ephemeral: true });
+    }
+    user.agencyData.joined = true;
+    user.agencyData.agency = "Impact Agency";
+    save();
+    return interaction.reply({ embeds: [new EmbedBuilder()
+      .setColor(0x00d4ff)
+      .setTitle("🏢 Joined Impact Agency")
+      .setDescription("You now qualify for lower platform fees and `/agencylive`.")] });
+  }
+
+  if (interaction.commandName === "enterlive") {
+    const creator = interaction.options.getUser("creator");
+    _db.liveSystem.enteredLives[interaction.user.id] = creator.id;
+    save();
+    return interaction.reply({ content: `📺 You entered **${creator.username}**'s live. You can now send coin gifts!`, ephemeral: true });
+  }
+
+  if (interaction.commandName === "golive" || interaction.commandName === "agencylive") {
+    const user = ensureEconomy(interaction.user.id);
+    const agencyMode = interaction.commandName === "agencylive";
+
+    if (agencyMode && !user.agencyData.joined) {
+      return interaction.reply({ content: "❌ You are not in Impact Agency.", ephemeral: true });
+    }
+
+    const limitMs = agencyMode ? 30 * 60 * 1000 : 2 * 60 * 60 * 1000;
+    const title = interaction.options.getString("title");
+
+    _db.liveSystem.activeLives[interaction.user.id] = {
+      title,
+      started: Date.now(),
+      ends: Date.now() + limitMs,
+      totalCoins: 0,
+      gifters: {},
+      agencyMode,
+    };
+
+    if (agencyMode) {
+      user.agencyData.lastAgencyLive = Date.now();
+    }
+
+    save();
+
+    setTimeout(async () => {
+      const live = _db.liveSystem.activeLives[interaction.user.id];
+      if (!live) return;
+
+      const cut = agencyMode ? 0.15 : (user.agencyData.joined ? 0.35 : 0.65);
+      const kept = Math.floor(live.totalCoins * (1 - cut));
+      const vbucksExchange = Math.floor((kept / 35000) * 1000 * 0.35);
+
+      delete _db.liveSystem.activeLives[interaction.user.id];
+      save();
+
+      try {
+        await interaction.user.send({
+          embeds: [new EmbedBuilder()
+            .setColor(0xf4a01a)
+            .setTitle("📊 Live Analytics")
+            .setDescription(
+              `Total Coins: **${live.totalCoins.toLocaleString()}**\n` +
+              `You Keep: **${kept.toLocaleString()}**\n` +
+              `Estimated V-Bucks Exchange: **${vbucksExchange.toLocaleString()}**`
+            )]
+        });
+      } catch {}
+    }, limitMs);
+
+    return interaction.reply({
+      embeds: [new EmbedBuilder()
+        .setColor(0xff2d55)
+        .setTitle(agencyMode ? "🏢 Agency Live Started" : "📡 Live Started")
+        .setDescription(`**${title}**\nEnds <t:${Math.floor((Date.now() + limitMs)/1000)}:R>`)]
+    });
+  }
+
+  if (interaction.commandName === "endlive") {
+    const live = _db.liveSystem.activeLives[interaction.user.id];
+    if (!live) {
+      return interaction.reply({ content: "❌ You are not live.", ephemeral: true });
+    }
+
+    const user = ensureEconomy(interaction.user.id);
+    const cut = live.agencyMode ? 0.15 : (user.agencyData.joined ? 0.35 : 0.65);
+    const kept = Math.floor(live.totalCoins * (1 - cut));
+    addCoins(interaction.user.id, kept);
+
+    delete _db.liveSystem.activeLives[interaction.user.id];
+    save();
+
+    return interaction.reply({
+      embeds: [new EmbedBuilder()
+        .setColor(0x57f287)
+        .setTitle("📴 Live Ended")
+        .setDescription(`Coins Earned: **${live.totalCoins.toLocaleString()}**\nCoins Kept: **${kept.toLocaleString()}**`)]
+    });
+  }
+
+  if (interaction.commandName === "coingift") {
+    const creator = interaction.options.getUser("creator");
+    const giftId = interaction.options.getString("gift");
+    const gift = STREAM_GIFTS.find(g => g.id === giftId);
+
+    if (_db.liveSystem.enteredLives[interaction.user.id] !== creator.id) {
+      return interaction.reply({ content: "❌ You must enter the creator's live first using `/enterlive`.", ephemeral: true });
+    }
+
+    const sender = ensureEconomy(interaction.user.id);
+    if (sender.coins < gift.coins) {
+      return interaction.reply({ content: `❌ You need ${gift.coins.toLocaleString()} coins.`, ephemeral: true });
+    }
+
+    const live = _db.liveSystem.activeLives[creator.id];
+    if (!live) {
+      return interaction.reply({ content: "❌ That creator is not live.", ephemeral: true });
+    }
+
+    removeCoins(interaction.user.id, gift.coins);
+    live.totalCoins += gift.coins;
+    live.gifters[interaction.user.id] = (live.gifters[interaction.user.id] || 0) + gift.coins;
+    save();
+
+    return interaction.reply({
+      embeds: [new EmbedBuilder()
+        .setColor(0xffd700)
+        .setTitle(`${gift.icon} ${gift.name} Sent!`)
+        .setDescription(`You sent **${gift.name}** to **${creator.username}** for **${gift.coins.toLocaleString()}** coins!`)]
+    });
+  }
+
+  if (interaction.commandName === "treasurechest") {
+    const totalCoins = interaction.options.getInteger("coins");
+    const maxPeople = interaction.options.getInteger("people");
+    const minutes = interaction.options.getInteger("minutes");
+
+    const chestId = `chest_${Date.now()}`;
+    _db.liveSystem.treasureChests[chestId] = {
+      totalCoins,
+      remainingCoins: totalCoins,
+      maxPeople,
+      openedBy: [],
+      expires: Date.now() + (minutes * 60000),
+    };
+
+    save();
+
+    const embed = new EmbedBuilder()
+      .setColor(0xffd700)
+      .setTitle("🪙 Treasure Chest")
+      .setDescription(
+        `Coins Inside: **${totalCoins.toLocaleString()}**\n` +
+        `People Allowed: **${maxPeople}**\n` +
+        `Expires: <t:${Math.floor((Date.now() + (minutes*60000))/1000)}:R>`
+      )
+      .setImage(CHEST_IMAGE);
+
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`openchest_${chestId}`)
+        .setLabel("Open Treasure Chest")
+        .setStyle(ButtonStyle.Success)
+    );
+
+    return interaction.reply({ embeds: [embed], components: [row] });
+  }
+});
+
+client.on("interactionCreate", async (interaction) => {
+  if (!interaction.isButton()) return;
+  if (!interaction.customId.startsWith("openchest_")) return;
+
+  const chestId = interaction.customId.split("_")[1];
+  const chest = _db.liveSystem.treasureChests[chestId];
+
+  if (!chest) {
+    return interaction.reply({ content: "❌ This chest expired.", ephemeral: true });
+  }
+
+  if (chest.openedBy.includes(interaction.user.id)) {
+    return interaction.reply({ content: "❌ You already opened this chest.", ephemeral: true });
+  }
+
+  if (Date.now() > chest.expires) {
+    delete _db.liveSystem.treasureChests[chestId];
+    save();
+    return interaction.reply({ content: "❌ The chest expired.", ephemeral: true });
+  }
+
+  chest.openedBy.push(interaction.user.id);
+
+  let won = 0;
+  const jackpotRoll = Math.random() * 100;
+  if (jackpotRoll <= 0.5) {
+    won = chest.remainingCoins;
+    chest.remainingCoins = 0;
+  } else if (jackpotRoll <= 2.5) {
+    won = 0;
+  } else {
+    won = Math.max(1, Math.floor(chest.remainingCoins / Math.max(1, (chest.maxPeople - chest.openedBy.length + 1))));
+    chest.remainingCoins -= won;
+  }
+
+  addCoins(interaction.user.id, won);
+
+  const statusEmbed = new EmbedBuilder()
+    .setColor(0xffd700)
+    .setTitle("🪙 Treasure Chest Updated")
+    .setDescription(
+      `Remaining Coins: **${chest.remainingCoins.toLocaleString()}**\n` +
+      `Opened By: ${chest.openedBy.map(id => `<@${id}>`).join(", ") || "Nobody"}`
+    )
+    .setImage(CHEST_IMAGE);
+
+  try {
+    await interaction.message.edit({ embeds: [statusEmbed] });
+  } catch {}
+
+  save();
+
+  if (won === 0) {
+    return interaction.reply({ content: "📦 The treasure chest was empty...", ephemeral: true });
+  }
+
+  return interaction.reply({
+    content: won >= chest.remainingCoins ? `💰 JACKPOT! You snagged the rest of the chest: ${won.toLocaleString()} coins!` : `🪙 You found ${won.toLocaleString()} coins!`,
+    ephemeral: true
+  });
+});
+
+// Agency inactivity cleanup
+setInterval(() => {
+  for (const [userId, user] of Object.entries(_db.users)) {
+    if (!user.agencyData?.joined) continue;
+    if (Date.now() - (user.agencyData.lastAgencyLive || 0) > (2 * 24 * 60 * 60 * 1000)) {
+      user.agencyData.joined = false;
+      user.agencyData.agency = null;
+      user.agencyData.bannedUntil = Date.now() + (7 * 24 * 60 * 60 * 1000);
+    }
+  }
+  save();
+}, 60 * 60 * 1000);
