@@ -1,4 +1,4 @@
-// FortitOpeners — updated with SQLite data layer + bundles + new commands
+// Fortit Discord Bot — updated with SQLite data layer + bundles + new commands
 require("dotenv").config();
 
 const {
@@ -3666,7 +3666,8 @@ const LIVE_GIFTS = {
 // FIXED TREASURE CHESTS
 // ================================
 
-const treasureChests = new Map();
+// removed duplicate treasureChests declaration
+
 
 client.on("interactionCreate", async interaction => {
 
@@ -3785,7 +3786,7 @@ client.on("interactionCreate", async interaction => {
       .setDescription(
         `Coins: **${coins.toLocaleString()}**\n` +
         `Openers: **0/${people}**\n` +
-        `Unlocks in: <t:${Math.floor((Date.now() + seconds * 1000)/1000)}:R>`
+        `Unlocks: <t:${Math.floor((Date.now() + seconds * 1000)/1000)}:R>`
       )
       .setThumbnail(
         "https://cdn.discordapp.com/attachments/1247303459359690805/1505279164289388544/Fx_CoinChest.webp"
