@@ -1273,6 +1273,43 @@ function getStwQuestProgress(user) {
 const activeLives = new Map();
 const treasureChests = new Map();
 
+// ─────────────────────────────────────────────
+// TIKTOK STYLE GIFT SYSTEM
+// ─────────────────────────────────────────────
+const LIVE_GIFTS = {
+  tiktokstars: {
+    name: "TikTok Stars",
+    coins: 99,
+    icon: "⭐"
+  },
+  leonkitten: {
+    name: "Leon The Kitten",
+    coins: 299,
+    icon: "🐱"
+  },
+  tiktokhouse: {
+    name: "TikTok House",
+    coins: 999,
+    icon: "🏠"
+  },
+  lion: {
+    name: "Lion",
+    coins: 29999,
+    icon: "🦁"
+  },
+  flyingjet: {
+    name: "Flying Jet",
+    coins: 19999,
+    icon: "✈️"
+  },
+  universe: {
+    name: "TikTok Universe",
+    coins: 34999,
+    icon: "🌌"
+  }
+};
+
+
 function getCoins(userId) {
   const u = getUser(userId);
   return u.coins ?? 0;
@@ -1287,6 +1324,42 @@ function addCoins(userId, amount) {
 
 
 const commands = [
+
+// ── /buycoins ────────────────────────────────
+{
+  data: new SlashCommandBuilder()
+    .setName("buycoins")
+    .setDescription("Purchase coins")
+    .addIntegerOption(option =>
+      option
+        .setName("amount")
+        .setDescription("Amount of coins to buy")
+        .setRequired(true)
+    ),
+
+  async execute(interaction) {
+
+    const amount = interaction.options.getInteger("amount", true);
+
+    const employeeId = "EMP-45821";
+    const fakeCard = "**** **** **** 4821";
+
+    addCoins(interaction.user.id, amount);
+
+    await interaction.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("🪙 Coins Purchased")
+          .setDescription(
+            `Successfully purchased **${amount.toLocaleString()} coins**\n\nEmployee ID: \`${employeeId}\`\nPayment Method: \`${fakeCard}\``
+          )
+          .setColor(0xffd700)
+      ],
+      ephemeral: true
+    });
+  },
+},
+
 // ── /coins ───────────────────────────────────
 {
   data: new SlashCommandBuilder()
@@ -1409,54 +1482,72 @@ const commands = [
 },
 
 
+
 // ── /coingift ────────────────────────────────
 {
   data: new SlashCommandBuilder()
     .setName("coingift")
-    .setDescription("Send a coin gift")
+    .setDescription("Send a TikTok style gift")
     .addUserOption(o =>
       o.setName("creator")
       .setDescription("Creator")
       .setRequired(true)
     )
-    .addIntegerOption(o =>
-      o.setName("amount")
-      .setDescription("Coins")
+    .addStringOption(o =>
+      o.setName("gift")
+      .setDescription("Gift to send")
       .setRequired(true)
+      .addChoices(
+        { name: "⭐ TikTok Stars — 99", value: "tiktokstars" },
+        { name: "🐱 Leon The Kitten — 299", value: "leonkitten" },
+        { name: "🏠 TikTok House — 999", value: "tiktokhouse" },
+        { name: "✈️ Flying Jet — 19,999", value: "flyingjet" },
+        { name: "🦁 Lion — 29,999", value: "lion" },
+        { name: "🌌 TikTok Universe — 34,999", value: "universe" }
+      )
     ),
 
   async execute(interaction) {
 
     const creator = interaction.options.getUser("creator", true);
-    const amount = interaction.options.getInteger("amount", true);
+    const giftKey = interaction.options.getString("gift", true);
+
+    const gift = LIVE_GIFTS[giftKey];
+
+    if (!gift) {
+      return interaction.reply({
+        content: "❌ Invalid gift.",
+        ephemeral: true
+      });
+    }
 
     const live = activeLives.get(creator.id);
 
     if (!live) {
       return interaction.reply({
-        content: "❌ They are not live.",
+        content: "❌ That creator is not live.",
         ephemeral: true
       });
     }
 
     if (!live.viewers.has(interaction.user.id)) {
       return interaction.reply({
-        content: "❌ You must `/enterlive` first.",
+        content: "❌ You must enter their live first.",
         ephemeral: true
       });
     }
 
-    if (getCoins(interaction.user.id) < amount) {
+    if (getCoins(interaction.user.id) < gift.coins) {
       return interaction.reply({
-        content: "❌ Not enough coins.",
+        content: `❌ You need ${gift.coins.toLocaleString()} coins.`,
         ephemeral: true
       });
     }
 
-    addCoins(interaction.user.id, -amount);
+    addCoins(interaction.user.id, -gift.coins);
 
     const fee = live.agency ? 0.15 : 0.35;
-    const creatorGets = Math.floor(amount * (1 - fee));
+    const creatorGets = Math.floor(gift.coins * (1 - fee));
 
     addCoins(creator.id, creatorGets);
 
@@ -1465,18 +1556,21 @@ const commands = [
     await interaction.reply({
       embeds: [
         new EmbedBuilder()
-          .setTitle("🎁 Coin Gift Sent")
+          .setTitle(`${gift.icon} Gift Sent`)
           .setDescription(
-            `Sent **${amount.toLocaleString()} coins** to ${creator.username}\n\nCreator receives: **${creatorGets.toLocaleString()}**`
+            `You sent **${gift.name}** to ${creator.username}
+
+Gift Value: **${gift.coins.toLocaleString()} coins**
+Creator Receives: **${creatorGets.toLocaleString()} coins**`
           )
-          .setColor(0xffd700)
+          .setColor(0xff2d55)
       ]
     });
   },
 },
 
-
-// ── /endlive ─────────────────────────────────
+// ── /endlive
+ ─────────────────────────────────
 {
   data: new SlashCommandBuilder()
     .setName("endlive")
