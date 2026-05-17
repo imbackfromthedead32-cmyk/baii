@@ -3704,3 +3704,237 @@ async function flushAndExit(signal) {
 
 process.on("SIGTERM", () => flushAndExit("SIGTERM"));
 process.on("SIGINT",  () => flushAndExit("SIGINT"));
+
+
+// ================= MERGED UK GIFTS PATCH =================
+
+
+// UPDATED UK TIKTOK GIFT DATABASE
+// Source references:
+// StreamToEarn UK gifts list
+// BetterTok
+// Coinvertify
+
+const LIVE_GIFTS = {
+  tiktokstars: {
+    name: "TikTok Stars",
+    coins: 39999,
+    emoji: "⭐"
+  },
+
+  universe: {
+    name: "TikTok Universe",
+    coins: 44999,
+    emoji: "🌌"
+  },
+
+  universeplus: {
+    name: "TikTok Universe+",
+    coins: 34999,
+    emoji: "✨"
+  },
+
+  lion: {
+    name: "Lion",
+    coins: 29999,
+    emoji: "🦁"
+  },
+
+  pegasus: {
+    name: "Pegasus",
+    coins: 42999,
+    emoji: "🪽"
+  },
+
+  firephoenix: {
+    name: "Fire Phoenix",
+    coins: 41999,
+    emoji: "🔥"
+  },
+
+  thunderfalcon: {
+    name: "Thunder Falcon",
+    coins: 39999,
+    emoji: "🦅"
+  },
+
+  zeus: {
+    name: "Zeus",
+    coins: 34000,
+    emoji: "⚡"
+  },
+
+  leonlion: {
+    name: "Leon and Lion",
+    coins: 34000,
+    emoji: "🦁"
+  },
+
+  samwhale: {
+    name: "Sam the Whale",
+    coins: 30000,
+    emoji: "🐋"
+  },
+
+  gorilla: {
+    name: "Gorilla",
+    coins: 30000,
+    emoji: "🦍"
+  },
+
+  flyingjets: {
+    name: "Flying Jets",
+    coins: 5000,
+    emoji: "✈️"
+  },
+
+  privatejet: {
+    name: "Private Jet",
+    coins: 4888,
+    emoji: "🛩️"
+  },
+
+  leonkitten: {
+    name: "Leon the Kitten",
+    coins: 4888,
+    emoji: "🐱"
+  },
+
+  galaxy: {
+    name: "Galaxy",
+    coins: 1000,
+    emoji: "🌠"
+  },
+
+  train: {
+    name: "Train",
+    coins: 899,
+    emoji: "🚂"
+  },
+
+  motorcycle: {
+    name: "Motorcycle",
+    coins: 2988,
+    emoji: "🏍️"
+  },
+
+  partyonon: {
+    name: "Party On&On",
+    coins: 15000,
+    emoji: "🎉"
+  },
+
+  spacestation: {
+    name: "Hero Space Ship",
+    coins: 4999,
+    emoji: "🚀"
+  },
+
+  earth: {
+    name: "Earth",
+    coins: 9999,
+    emoji: "🌍"
+  },
+
+  falcon: {
+    name: "Falcon",
+    coins: 10999,
+    emoji: "🦅"
+  }
+};
+
+// FIXED PRESETS
+
+const GIFT_PRESETS = {
+  cheap: [
+    "galaxy",
+    "train",
+    "motorcycle"
+  ],
+
+  popular: [
+    "flyingjets",
+    "lion",
+    "universe",
+    "leonkitten"
+  ],
+
+  legendary: [
+    "universe",
+    "pegasus",
+    "firephoenix",
+    "thunderfalcon",
+    "tiktokstars"
+  ]
+};
+
+// FIXED TREASURE CHEST OPENING
+
+client.on("interactionCreate", async interaction => {
+
+  if (!interaction.isButton()) return;
+
+  if (!interaction.customId.startsWith("openchest_")) return;
+
+  const chestId = interaction.customId.split("_")[1];
+
+  const chest = treasureChests.get(chestId);
+
+  if (!chest) {
+    return interaction.reply({
+      content: "❌ Chest expired.",
+      ephemeral: true
+    });
+  }
+
+  if (Date.now() < chest.unlockTime) {
+    const remaining = Math.ceil((chest.unlockTime - Date.now()) / 1000);
+
+    return interaction.reply({
+      content: `⏳ Unlocks in ${remaining}s`,
+      ephemeral: true
+    });
+  }
+
+  if (chest.claimed.includes(interaction.user.id)) {
+    return interaction.reply({
+      content: "❌ You already opened this chest.",
+      ephemeral: true
+    });
+  }
+
+  if (chest.claimed.length >= chest.maxPeople) {
+    return interaction.reply({
+      content: "❌ This chest is fully claimed.",
+      ephemeral: true
+    });
+  }
+
+  chest.claimed.push(interaction.user.id);
+
+  // 2% empty chance
+  if (Math.random() <= 0.02) {
+    return interaction.reply({
+      content: "📦 The chest was empty...",
+      ephemeral: true
+    });
+  }
+
+  let reward = Math.floor(
+    chest.remaining / (chest.maxPeople - chest.claimed.length + 1)
+  );
+
+  // jackpot
+  if (Math.random() <= 0.005) {
+    reward = chest.remaining;
+  }
+
+  chest.remaining -= reward;
+
+  addCoins(interaction.user.id, reward);
+
+  return interaction.reply({
+    content: `🪙 You got ${reward.toLocaleString()} coins!`,
+    ephemeral: true
+  });
+});
