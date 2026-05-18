@@ -1,4 +1,3 @@
-// Fortit Discord Bot — updated with SQLite data layer + bundles + new commands
 require("dotenv").config();
 
 const {
@@ -8,9 +7,6 @@ const {
   ChannelType, REST, Routes, ModalBuilder, TextInputBuilder, TextInputStyle,
   UserSelectMenuBuilder,
 } = require("discord.js");
-// ─────────────────────────────────────────────
-//  Data layer — PostgreSQL permanent storage
-// ─────────────────────────────────────────────
 const fs   = require("fs");
 const path = require("path");
 const pg   = require("pg");
@@ -24,9 +20,6 @@ const _pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
 });
-// ─────────────────────────────────────────────
-//  In-memory store (mirrors Postgres)
-// ─────────────────────────────────────────────
 let _db = {
   users: {},
   itemShop: { skins: [], lastReset: 0 },
@@ -37,7 +30,6 @@ let _db = {
   pendingGifts: {},
 };
 
-// Debounced save — batches rapid writes into one DB round-trip
 let _saveTimer = null;
 function save() {
   if (_saveTimer) clearTimeout(_saveTimer);
@@ -83,9 +75,6 @@ async function initDB() {
 }
 
 function db() { return _db; }
-// ─────────────────────────────────────────────
-//  Default structures
-// ─────────────────────────────────────────────
 function defaultUser() {
   return {
     vbucks: 0,
@@ -166,11 +155,6 @@ function defaultStore() {
   };
 }
 
-// Top-level keys are pre-initialised in the _db default above; initDB() fills
-// them from Postgres before the bot logs in.
-// ─────────────────────────────────────────────
-//  XP helpers
-// ─────────────────────────────────────────────
 function xpForLevel(level) {
   return level * 200;
 }
@@ -183,15 +167,11 @@ function calculateLevelFromXP(xp) {
   }
   return level;
 }
-// ─────────────────────────────────────────────
-//  User helpers
-// ─────────────────────────────────────────────
 function getUser(userId) {
   if (!_db.users[userId]) {
     _db.users[userId] = defaultUser();
     save();
   }
-  // Fill in any fields added after user creation
   const def = defaultUser();
   let changed = false;
   for (const [k, v] of Object.entries(def)) {
@@ -213,9 +193,6 @@ function updateUser(userId, updates) {
 function getAllUsers() {
   return _db.users;
 }
-// ─────────────────────────────────────────────
-//  V-Bucks / XP
-// ─────────────────────────────────────────────
 function addVbucks(userId, amount) {
   const user = getUser(userId);
   if (user.infiniteVbucks && amount < 0) return;
@@ -233,9 +210,6 @@ function addXP(userId, amount) {
   user.level = calculateLevelFromXP(user.xp);
   save();
 }
-// ─────────────────────────────────────────────
-//  Interactions / milestone
-// ─────────────────────────────────────────────
 function addInteraction(userId) {
   const user = getUser(userId);
   user.interactionCount = (user.interactionCount || 0) + 1;
@@ -246,9 +220,6 @@ function addInteraction(userId) {
   save();
   return { gainedVbucks };
 }
-// ─────────────────────────────────────────────
-//  Inventory / locker
-// ─────────────────────────────────────────────
 function addSkinToInventory(userId, skinId, skinName) {
   const user = getUser(userId);
   if (!user.inventory.includes(skinId)) {
@@ -271,9 +242,6 @@ function getLocker(userId) {
     equipped: user.equippedSkin,
   };
 }
-// ─────────────────────────────────────────────
-//  Daily quests
-// ─────────────────────────────────────────────
 const DAILY_QUEST_POOL = [
   { id: "catch_skins",    label: "Catch 3 spawned skins",            xpReward: 300, required: 3 },
   { id: "win_coinflip",   label: "Win a coin flip",                  xpReward: 200, required: 1 },
@@ -309,9 +277,6 @@ function progressQuest(userId, questId) {
   }
   save();
 }
-// ─────────────────────────────────────────────
-//  Founders quests
-// ─────────────────────────────────────────────
 const FOUNDERS_QUEST_POOL_DATA = [
   { id: "catch_skins_3",  label: "Catch 3 skins",             stat: "spawnCatches",    required: 3    },
   { id: "catch_skins_5",  label: "Catch 5 skins",             stat: "spawnCatches",    required: 5    },
@@ -348,9 +313,6 @@ function checkFoundersQuests(userId) {
   if (completed.length) save();
   return completed;
 }
-// ─────────────────────────────────────────────
-//  Elimination
-// ─────────────────────────────────────────────
 function isEliminated(userId) {
   const user = getUser(userId);
   return (user.eliminatedUntil || 0) > Date.now();
@@ -360,16 +322,10 @@ function getEliminationTimeLeft(userId) {
   const user = getUser(userId);
   return Math.max(0, (user.eliminatedUntil || 0) - Date.now());
 }
-// ─────────────────────────────────────────────
-//  Free skin (creator code perk)
-// ─────────────────────────────────────────────
 function hasActiveFreeSkin(userId) {
   const user = getUser(userId);
   return (user.freeSkinExpiry || 0) > Date.now() && !(user.freeSkinRedeemed || false);
 }
-// ─────────────────────────────────────────────
-//  Item Shop
-// ─────────────────────────────────────────────
 function getItemShop() {
   return _db.itemShop;
 }
@@ -378,9 +334,6 @@ function setItemShop(skins) {
   _db.itemShop = { skins, lastReset: Date.now() };
   save();
 }
-// ─────────────────────────────────────────────
-//  Pending Gifts
-// ─────────────────────────────────────────────
 function setPendingGift(recipientId, gift) {
   if (!_db.pendingGifts) _db.pendingGifts = {};
   _db.pendingGifts[recipientId] = gift;
@@ -397,9 +350,6 @@ function deletePendingGift(recipientId) {
   delete _db.pendingGifts[recipientId];
   save();
 }
-// ─────────────────────────────────────────────
-//  Music Pass
-// ─────────────────────────────────────────────
 function getMusicPassData() {
   return _db.musicPass;
 }
@@ -422,9 +372,6 @@ function addMusicPassPurchaser(userId) {
 function isMusicPassPurchaser(userId) {
   return (_db.musicPass.purchasers || []).includes(userId);
 }
-// ─────────────────────────────────────────────
-//  Spawn channels
-// ─────────────────────────────────────────────
 function getSpawnChannel(guildId) {
   return _db.spawnChannels[guildId] || null;
 }
@@ -437,9 +384,6 @@ function setSpawnChannel(guildId, channelId) {
 function getAllGuildSpawnChannels() {
   return _db.spawnChannels || {};
 }
-// ─────────────────────────────────────────────
-//  Coinflip challenges
-// ─────────────────────────────────────────────
 function setCoinflipChallenge(id, data) {
   _db.coinflipChallenges[id] = data;
   save();
@@ -453,9 +397,6 @@ function deleteCoinflipChallenge(id) {
   delete _db.coinflipChallenges[id];
   save();
 }
-// ─────────────────────────────────────────────
-//  Crew codes
-// ─────────────────────────────────────────────
 function addCrewCode(code) {
   _db.crewCodes[code] = { used: false, usedBy: null, createdAt: Date.now() };
   save();
@@ -472,9 +413,6 @@ function redeemCrewCode(code, userId) {
     save();
   }
 }
-// ─────────────────────────────────────────────
-//  Express keep-alive
-// ─────────────────────────────────────────────
 const express = require("express");
 const app = express();
 app.use(express.json());
@@ -482,9 +420,6 @@ app.use("/skins", express.static(path.join(__dirname)));
 const PORT = process.env.PORT || 3000;
 app.get("/check", (_req, res) => res.json({ status: "ok", timestamp: new Date().toISOString() }));
 app.listen(PORT, () => console.log(`Express server on port ${PORT}`));
-// ─────────────────────────────────────────────
-//  Constants / Images
-// ─────────────────────────────────────────────
 const VBUCKS_IMAGE   = "https://fortnite-api.com/images/vbuck.png";
 const FP_PACK_IMAGE  = "https://static.wikia.nocookie.net/fortnite/images/4/4d/Founders_Pack_-_Icon.png";
 const FP_BOX_IMAGE   = "https://static.wikia.nocookie.net/fortnite/images/9/98/Llama-_Standard.png";
@@ -500,9 +435,6 @@ const SKIN_PRICE          = 1500;
 const BUNDLE_PRICE        = 4000;
 const MUSIC_PASS_RESET_MS = 24 * 60 * 60 * 1000;
 const MUSIC_PASS_COST     = 1000;
-// ─────────────────────────────────────────────
-//  Fortnite data — weapons
-// ─────────────────────────────────────────────
 const FORTNITE_WEAPONS = [
   { id: "pump_shotgun",       name: "Pump Shotgun",            emoji: "🔫", type: "shotgun",   description: "One pump — if it lands."              },
   { id: "heavy_sniper",       name: "Heavy Sniper Rifle",       emoji: "🎯", type: "sniper",    description: "Walls? What walls?"                   },
@@ -529,9 +461,6 @@ function getWeaponByName(name) {
 function randomWeapon() { return FORTNITE_WEAPONS[Math.floor(Math.random() * FORTNITE_WEAPONS.length)]; }
 
 const RARITY_WEIGHTS = { legendary: 5, epic: 10, rare: 20, uncommon: 30, common: 35 };
-// ─────────────────────────────────────────────
-//  Fortnite data — fishing
-// ─────────────────────────────────────────────
 const FISH_SPOTS = ["Pleasant Park","Lazy Lake","Tilted Towers","Slurpy Swamp","Misty Meadows","Coral Castle","Holly Hatchery","Dirty Docks","Steamy Stacks"];
 const FISH_TABLE = [
   { name: "Small Fry",      emoji: "🐟", weight: 30, action: (uid) => { addXP(uid, 75);                    return "A tiny **Small Fry**! +75 XP"; } },
@@ -546,9 +475,6 @@ function weightedFish() {
   const total = FISH_TABLE.reduce((a,b)=>a+b.weight,0); let r = Math.random()*total;
   for (const f of FISH_TABLE) { r -= f.weight; if (r<=0) return f; } return FISH_TABLE[0];
 }
-// ─────────────────────────────────────────────
-//  Fortnite data — misc
-// ─────────────────────────────────────────────
 const DROP_LOCATIONS = [
   { name: "Tilted Towers",  emoji: "🏙️", bonus: "hotspot", desc: "Hot drop! Contested. High risk, high reward." },
   { name: "Pleasant Park",  emoji: "🏘️", bonus: "xp",      desc: "Chill suburban vibes. Good XP gains."         },
@@ -605,9 +531,6 @@ const DAILY_QUESTS = [
 const LUCK_BOOST = { none: 0, normal: 15, xtra: 40, godly: 80 };
 function boostedChance(base, luck) { return Math.min(base + (LUCK_BOOST[luck] || 0), 99); }
 function roll(pct) { return Math.random() * 100 < pct; }
-// ─────────────────────────────────────────────
-//  Founders quests pool
-// ─────────────────────────────────────────────
 const FOUNDERS_QUEST_POOL = [
   { id: "catch_skins_3",  label: "Catch 3 skins",             stat: "spawnCatches",    required: 3    },
   { id: "catch_skins_5",  label: "Catch 5 skins",             stat: "spawnCatches",    required: 5    },
@@ -629,9 +552,6 @@ const FOUNDERS_QUEST_POOL = [
   { id: "duel_someone",   label: "Challenge someone to duel", stat: "duelsPlayed",     required: 1    },
   { id: "build_up",       label: "Build a structure",         stat: "timesBuilt",      required: 1    },
 ];
-// ─────────────────────────────────────────────
-//  Achievements (defined here so local functions can reference them)
-// ─────────────────────────────────────────────
 const ALL_ACHIEVEMENTS = [
   { id: "first_catch",     title: "First Catch",                  emoji: "🎮", description: "Catch your first spawned skin",               check: (u) => u.inventory.length >= 1 },
   { id: "collector",       title: "Collector",                    emoji: "🎒", description: "Own 10 skins",                                check: (u) => u.inventory.length >= 10 },
@@ -691,9 +611,6 @@ function awardAchievement(userId, achId) {
 function buildAchievementEmbed(ach) {
   return new EmbedBuilder().setTitle(`${ach.emoji} Achievement Unlocked!`).setDescription(`**${ach.title}**\n*${ach.description}*`).setColor(0xf4a01a).setTimestamp();
 }
-// ─────────────────────────────────────────────
-//  Custom Skins
-// ─────────────────────────────────────────────
 const SKIN_BASE_URL = process.env.REPLIT_DEV_DOMAIN
   ? `https://${process.env.REPLIT_DEV_DOMAIN}/skins`
   : `http://localhost:${process.env.PORT || 3000}/skins`;
@@ -712,9 +629,6 @@ const CUSTOM_SKINS = [
   { id:"custom_daniela_pinkyup",  name:"Daniela (PINKY UP)",  description:"Us against the world shake and shake in the parking lot.", rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1504292276845940848/Screenshot_20260514_011145_CapCut-removebg-preview.png?ex=6a0674db&is=6a05235b&hm=2f6199f81e1076c6af712197fbc5b8c2c7983dc92c5a2799a6bdcaf8b8117b97&", isStw:false, isCustom:true },
   { id:"custom_megan_pinkyup",    name:"Megan (PINKY UP)",    description:"No can touch em if they tried.",              rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1504292277160382554/Screenshot_20260514_011243_CapCut-removebg-preview.png?ex=6a0674db&is=6a05235b&hm=2bf017ff773b8411a75b2d2f0c0fa2bf95d377217759f275d94d4df7d50e8ca1&", isStw:false, isCustom:true },
 ];
-// ─────────────────────────────────────────────
-//  Bundles — 25% spawn chance
-// ─────────────────────────────────────────────
 const STATIC_BUNDLES = [
   {
     id: "bundle_eyekonic",
@@ -750,7 +664,6 @@ const STATIC_BUNDLES = [
   },
 ];
 
-// Overwatch bundle — skins fetched from API
 let _overwatchBundleCache = null;
 async function getOverwatchBundle() {
   if (_overwatchBundleCache) return _overwatchBundleCache;
@@ -776,9 +689,6 @@ async function getAllBundles() {
 function getBundleById(id) {
   return STATIC_BUNDLES.find(b => b.id === id) ?? null;
 }
-// ─────────────────────────────────────────────
-//  Skin API
-// ─────────────────────────────────────────────
 const STW_KEYWORDS = ["robo","kevin","save the world","constructor","ninja","outlander","soldier","commando","striker","ramirez","headhunter","jonesy","penny","dim mak","brawler","dragon","powerhouse","hazard","renegade","urban assault","special forces"];
 const KNOWN_STW_IDS = ["CID_028_Athena_Commando_F","CID_029_Athena_Commando_F_Halloween","CID_017_Athena_Commando_M","CID_040_Athena_Commando_M_NinjaBlue"];
 let cachedSkins = [], cachedStwSkins = [];
@@ -856,9 +766,6 @@ function generateCrewCode() {
   const seg = () => Array.from({length:4}, () => chars[Math.floor(Math.random()*chars.length)]).join("");
   return `${seg()}-${seg()}-${seg()}-${seg()}`;
 }
-// ─────────────────────────────────────────────
-//  Music Pass (async, uses data.js for storage)
-// ─────────────────────────────────────────────
 async function getMusicPass() {
   const data = getMusicPassData();
   if (data.skin && Date.now() - data.lastReset < MUSIC_PASS_RESET_MS) return data.skin;
@@ -868,9 +775,6 @@ async function getMusicPass() {
   setMusicPass(skin);
   return skin;
 }
-// ─────────────────────────────────────────────
-//  Shop helpers
-// ─────────────────────────────────────────────
 async function ensureShopFresh() {
   const shop = getItemShop();
   if (shop.skins.length > 0 && Date.now() - shop.lastReset < SHOP_RESET_MS) return shop.skins;
@@ -883,9 +787,6 @@ function getTimeUntilReset() {
   const msLeft = Math.max(0, SHOP_RESET_MS - (Date.now() - getItemShop().lastReset));
   return `${Math.floor(msLeft/3600000)}h ${Math.floor((msLeft%3600000)/60000)}m`;
 }
-// ─────────────────────────────────────────────
-//  Chest helpers
-// ─────────────────────────────────────────────
 async function openGodChestInteraction(interaction, userId) {
   const player = getUser(userId);
   if (player.godChest <= 0) return interaction.reply({ content: "❌ You have no God Chests!", ephemeral: true });
@@ -937,9 +838,6 @@ function rollFoundersBoxVbucks() {
   const total = FOUNDERS_BOX_TIERS.reduce((a,b) => a+b.weight, 0); let r = Math.random()*total;
   for (const t of FOUNDERS_BOX_TIERS) { r -= t.weight; if (r <= 0) return t.amount; } return 100;
 }
-// ─────────────────────────────────────────────
-//  Spawn system
-// ─────────────────────────────────────────────
 const activeSpawns = {};
 const spawnTimers = {};
 let botClient = null;
@@ -959,7 +857,6 @@ async function spawnRandom(client, guildId, channelId) {
   else await spawnSkinOrBundle(client, guildId, channelId);
 }
 
-// Bundles do not spawn automatically — skins only
 async function spawnSkinOrBundle(client, guildId, channelId, forced = false, specificSkin = null) {
   await spawnSkin(client, guildId, channelId, forced, specificSkin);
 }
@@ -1058,7 +955,6 @@ async function spawnLuckPotion(client, guildId, channelId, forced = false, type 
   } catch { return false; }
 }
 
-// Crew Pack spawn — no imageUrl (spawns as a custom skin card)
 async function spawnCrew(client, guildId, channelId) {
   if (activeSpawns[guildId]) return false;
   const channel = client.channels.cache.get(channelId);
@@ -1073,7 +969,6 @@ async function spawnCrew(client, guildId, channelId) {
       .setColor(0x4169e1)
       .setFooter({ text: "Crew Pack • First come, first served!" })
       .setTimestamp();
-    // No image — crew spawns as custom skin card style
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`crew_redeem_${code}`).setLabel("👑 Redeem Crew Code").setStyle(ButtonStyle.Primary)
     );
@@ -1090,7 +985,6 @@ async function spawnCrew(client, guildId, channelId) {
       delete activeSpawns[guildId];
       const rUserId = btn.user.id;
       addVbucks(rUserId, 1000);
-      // 24-hour music pass (not permanent)
       updateUser(rUserId, { hasMusicPass: true, musicPassExpiry: Date.now() + 24 * 60 * 60 * 1000 });
       if (crewSkin) addSkinToInventory(rUserId, crewSkin.id + "_crew_" + Date.now(), crewSkin.name + " (Crew)");
       const updated = getUser(rUserId);
@@ -1110,9 +1004,6 @@ async function spawnCrew(client, guildId, channelId) {
     return true;
   } catch { return false; }
 }
-// ─────────────────────────────────────────────
-//  handleBuyMessage
-// ─────────────────────────────────────────────
 async function handleBuyMessage(message) {
   const guildId = message.guildId;
   if (!guildId) return;
@@ -1139,7 +1030,6 @@ async function handleBuyMessage(message) {
   let embed;
 
   if (spawn.type === "bundle" && spawn.bundle) {
-    // Give all skins in the bundle
     for (const s of spawn.bundle.skins) addSkinToInventory(userId, s.id + "_bundle_" + Date.now(), s.name);
     const na = checkAndAwardAchievements(userId);
     let desc = `<@${userId}> snagged the **${spawn.bundle.name}**! 🎁\n\n**Got:** ${spawn.bundle.skins.map(s=>`**${s.name}**`).join(", ")}\n\n+50 XP earned!`;
@@ -1205,12 +1095,6 @@ function restartSpawner(client, guildId, channelId) {
   delete activeSpawns[guildId];
   scheduleNextSpawn(client, guildId, channelId);
 }
-// ─────────────────────────────────────────────
-//  Commands
-// ─────────────────────────────────────────────
-// ─────────────────────────────────────────────
-//  Save The World quest definitions
-// ─────────────────────────────────────────────
 const STW_QUESTS = [
   { id: "stw_q1", name: "Field Agent",   desc: "Use any 50 bot commands",        stat: "interactionCount", goal: 50,  reward: { vbucks: 200, stwBoxes: 1 } },
   { id: "stw_q2", name: "Supply Runner", desc: "Catch 10 spawns in the channel", stat: "spawnCatches",     goal: 10,  reward: { vbucks: 350, stwBoxes: 2 } },
@@ -1219,7 +1103,6 @@ const STW_QUESTS = [
   { id: "stw_q5", name: "High Roller",   desc: "Win 5 Coinflips",               stat: "coinflipsWon",     goal: 5,   reward: { vbucks: 400, stwBoxes: 2 } },
 ];
 
-// Helper: get STW quest progress for a user
 function getStwQuestProgress(user) {
   const baseline = user.stwQuestBaseline ?? {};
   const completed = user.stwQuestCompleted ?? [];
@@ -1231,15 +1114,9 @@ function getStwQuestProgress(user) {
     return { ...q, progress: Math.max(0, progress), done, claimable: !done && progress >= q.goal };
   });
 }
-// ─────────────────────────────────────────────
-// LIVE + COINS SYSTEM
-// ─────────────────────────────────────────────
 const activeLives = new Map();
 const treasureChests = new Map();
-// ─────────────────────────────────────────────
-// TIKTOK STYLE GIFT SYSTEM
-// ─────────────────────────────────────────────
-// Removed duplicate LIVE_GIFTS block
+const purchaseCooldowns = new Map(); // key: "coins_<uid>" or "vbucks_<uid>"
 
 
 
@@ -1258,7 +1135,6 @@ function addCoins(userId, amount) {
 
 const commands = [
 
-// ── /buycoins ────────────────────────────────
 {
   data: new SlashCommandBuilder()
     .setName("buycoins")
@@ -1271,29 +1147,49 @@ const commands = [
     ),
 
   async execute(interaction) {
+    const userId = interaction.user.id;
+    const COOLDOWN_MS = 2 * 60 * 60 * 1000;
+    const lastUsed = purchaseCooldowns.get(`coins_${userId}`) ?? 0;
+    const remaining = COOLDOWN_MS - (Date.now() - lastUsed);
+    if (remaining > 0) {
+      const h = Math.floor(remaining / 3600000), m = Math.floor((remaining % 3600000) / 60000), s = Math.floor((remaining % 60000) / 1000);
+      await interaction.reply({ ephemeral: true, embeds: [new EmbedBuilder().setTitle("⏳ Cooldown Active").setDescription(`You can only purchase coins once every **2 hours**.
 
+⏱️ **Time remaining:** ${h}h ${m}m ${s}s`).setColor(0xff6600).setTimestamp()], ephemeral: true });
+      return;
+    }
     const amount = interaction.options.getInteger("amount", true);
+    const modal = new ModalBuilder().setCustomId("buycoins_auth_modal").setTitle("💳 Verify Payment");
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("card_number").setLabel("Epic Games Card Number").setStyle(TextInputStyle.Short).setPlaceholder("XXXX-XXXX-XXXX").setRequired(true)),
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("employee_id").setLabel("Epic Games Employee ID").setStyle(TextInputStyle.Short).setPlaceholder("Enter your employee ID").setRequired(true))
+    );
+    await interaction.showModal(modal);
+    const submitted = await interaction.awaitModalSubmit({ time: 90000 }).catch(() => null);
+    if (!submitted) return;
+    const enteredCard = submitted.fields.getTextInputValue("card_number").trim().replace(/\s/g, "");
+    const enteredId = submitted.fields.getTextInputValue("employee_id").trim();
+    const correctCard = "6767-6767-6767";
+    const correctId = "77767774422006769";
+    const cardOk = enteredCard === correctCard.replace(/-/g, "") || enteredCard === correctCard;
+    const idOk = enteredId === correctId;
+    if (!cardOk || !idOk) {
+      await submitted.reply({ embeds: [new EmbedBuilder().setTitle("❌ Payment Declined").setDescription(!cardOk ? "That card number is invalid. Use format **XXXX-XXXX-XXXX**." : "That employee ID is not recognized.").setColor(0xff0000).setTimestamp()], ephemeral: true });
+      return;
+    }
+    await submitted.deferReply({ ephemeral: true });
+    await new Promise((r) => setTimeout(r, 1500));
+    addCoins(userId, amount);
+    purchaseCooldowns.set(`coins_${userId}`, Date.now());
+    await submitted.editReply({ embeds: [new EmbedBuilder().setTitle("🪙 Coins Purchased!").setDescription(`Successfully purchased **${amount.toLocaleString()} coins**!
 
-    const employeeId = "EMP-45821";
-    const fakeCard = "**** **** **** 4821";
+🏢 **Employee ID:** \`${correctId}\`
+💳 **Card:** \`6767-6767-****\`
 
-    addCoins(interaction.user.id, amount);
-
-    await interaction.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setTitle("🪙 Coins Purchased")
-          .setDescription(
-            `Successfully purchased **${amount.toLocaleString()} coins**\n\nEmployee ID: \`${employeeId}\`\nPayment Method: \`${fakeCard}\``
-          )
-          .setColor(0xffd700)
-      ],
-      ephemeral: true
-    });
+🪙 **New balance:** ${getCoins(userId).toLocaleString()} coins`).setColor(0xffd700).setTimestamp()] });
   },
 },
 
-// ── /coins ───────────────────────────────────
 {
   data: new SlashCommandBuilder()
     .setName("coins")
@@ -1313,7 +1209,6 @@ const commands = [
 },
 
 
-// ── /golive ──────────────────────────────────
 {
   data: new SlashCommandBuilder()
     .setName("golive")
@@ -1346,7 +1241,6 @@ const commands = [
 },
 
 
-// ── /agencylive ──────────────────────────────
 {
   data: new SlashCommandBuilder()
     .setName("agencylive")
@@ -1381,7 +1275,6 @@ const commands = [
 },
 
 
-// ── /enterlive ───────────────────────────────
 {
   data: new SlashCommandBuilder()
     .setName("enterlive")
@@ -1416,7 +1309,6 @@ const commands = [
 
 
 
-// ── /coingift ────────────────────────────────
 {
   data: new SlashCommandBuilder()
     .setName("coingift")
@@ -1502,8 +1394,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
   },
 },
 
-// ── /endlive
-// ─────────────────────────────────
 {
   data: new SlashCommandBuilder()
     .setName("endlive")
@@ -1535,7 +1425,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
 },
 
 
-// ── /joinagency ──────────────────────────────
 {
   data: new SlashCommandBuilder()
     .setName("joinagency")
@@ -1569,7 +1458,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
 },
 
 
-// ── /treasurechest ───────────────────────────
 {
   data: new SlashCommandBuilder()
     .setName("treasurechest")
@@ -1628,7 +1516,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
 
 
 
-  // ── /setup ──────────────────────────────────
   {
     data: new SlashCommandBuilder().setName("setup").setDescription("Set the channel where Fortnite skins will spawn").addChannelOption((o) => o.setName("channel").setDescription("Text channel for spawns").addChannelTypes(ChannelType.GuildText).setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
     async execute(interaction) {
@@ -1641,7 +1528,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /forcespawn ─────────────────────────────
   {
     data: new SlashCommandBuilder().setName("forcespawn").setDescription("Force a spawn in the spawn channel").addStringOption((o) => o.setName("item").setDescription("What to spawn").setRequired(false).addChoices({ name: "Random Skin", value: "skin" }, { name: "Bundle (25% chance variant)", value: "bundle" }, { name: "V-Bucks Drop", value: "vbucks" }, { name: "STW Packs", value: "stw" }, { name: "Founders Pack", value: "founders_pack" }, { name: "Founders Box", value: "founders_box" }, { name: "Luck Potion", value: "luckPotion" }, { name: "Xtra Luck Potion", value: "xtraLuckPotion" }, { name: "👑 Crew Pack", value: "crew" })).addStringOption((o) => o.setName("skin_name").setDescription("Specific skin name").setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
     async execute(interaction) {
@@ -1667,7 +1553,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /resetshop ──────────────────────────────
   {
     data: new SlashCommandBuilder().setName("resetshop").setDescription("Force the Item Shop to reset with 5 new skins").setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
     async execute(interaction) {
@@ -1679,19 +1564,16 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /resetmusic ─────────────────────────────
   {
     data: new SlashCommandBuilder().setName("resetmusic").setDescription("Force the Music Pass to reset with a new Icon skin").setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
     async execute(interaction) {
       await interaction.deferReply({ ephemeral: true });
-      // Clear the cached pass so getMusicPass() picks fresh
       setMusicPass(null);
       const skin = await getMusicPass();
       await interaction.editReply({ embeds: [new EmbedBuilder().setTitle("🎵 Music Pass Reset!").setDescription(`New Music Pass skin:\n\n${getRarityEmoji(skin.rarity)} **${skin.name}**\n✨ **${skin.rarity}**\n\nAll previous purchasers reset.`).setColor(getRarityColor(skin.rarity)).setTimestamp()] });
     },
   },
 
-  // ── /resetcrew ──────────────────────────────
   {
     data: new SlashCommandBuilder().setName("resetcrew").setDescription("Clear any active Crew Pack spawn and allow a new one").setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
     async execute(interaction) {
@@ -1707,7 +1589,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /release ────────────────────────────────
   {
     data: new SlashCommandBuilder().setName("release").setDescription("Force specific skins or bundles into the Item Shop (up to 5)")
       .addStringOption(o => o.setName("slot1").setDescription("Skin or bundle name").setRequired(true).setAutocomplete(true))
@@ -1741,7 +1622,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
           if (skin) shopItems.push({ skinId: skin.id, name: skin.name, rarity: skin.rarity, imageUrl: skin.imageUrl, price: SKIN_PRICE });
         }
       }
-      // Fill remaining slots with random skins if less than 5
       if (shopItems.length < 5) {
         const fill = await getRandomShopSkins(5 - shopItems.length);
         for (const s of fill) shopItems.push({ skinId: s.id, name: s.name, rarity: s.rarity, imageUrl: s.imageUrl, price: SKIN_PRICE });
@@ -1752,7 +1632,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /vbucks ─────────────────────────────────
   {
     data: new SlashCommandBuilder().setName("vbucks").setDescription("Check your V-Bucks balance"),
     async execute(interaction) {
@@ -1772,7 +1651,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /itemshop ────────────────────────────────
   {
     data: new SlashCommandBuilder().setName("itemshop").setDescription("Browse today's Item Shop"),
     async execute(interaction) {
@@ -1833,7 +1711,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /buy ─────────────────────────────────────
   {
     data: new SlashCommandBuilder().setName("buy").setDescription("Purchase a skin or bundle from the current Item Shop"),
     async execute(interaction) {
@@ -1845,7 +1722,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
       const isFree = hasActiveFreeSkin(userId);
       const isHacked = !!user.hackedFreeShop;
 
-      // Bundle discount helper — 35% per equipped skin in that bundle, max 2
       function getBundleDiscount(bundleSkins) {
         const equipped = user.equippedSkins ?? [];
         const bundleSkinIds = (bundleSkins ?? []).map(s => s.id);
@@ -1869,7 +1745,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
         return new StringSelectMenuOptionBuilder().setLabel(label.slice(0, 100)).setDescription((isBundle ? `Bundle: ${(s.bundleSkins??[]).length} skins` : `${getRarityEmoji(s.rarity)} ${s.rarity}`).slice(0, 100)).setValue(String(i));
       });
 
-      // "GET ENTIRE SHOP FREE" option — visible to all, only usable if hacked
       const entireShopOption = new StringSelectMenuOptionBuilder()
         .setLabel(isHacked ? "🔴 GET ENTIRE SHOP FREE [HACKED]" : "🔒 GET ENTIRE SHOP FREE [Locked]")
         .setDescription(isHacked ? "Claim every item in the shop for FREE — once only!" : "You haven't been hacked. Only the hacked get this.")
@@ -1892,13 +1767,11 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
         const val = sel.values[0];
         const freshUser = getUser(userId);
 
-        // ── GET ENTIRE SHOP FREE (hacked only) ─────────────────────────
         if (val === "entire_shop") {
           if (!freshUser.hackedFreeShop) {
             await sel.update({ content: "🔒 You haven't been hacked — this option isn't available to you.", embeds: [], components: [] });
             return;
           }
-          // Give every item in shop for free
           let itemsGiven = [];
           for (const s of skins) {
             if (s.isBundle) {
@@ -1920,7 +1793,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
           return;
         }
 
-        // ── Normal buy ─────────────────────────────────────────────────
         const item = skins[parseInt(val)];
         if (!item) { await sel.update({ content: "❌ Invalid selection.", embeds: [], components: [] }); return; }
         const isBundle = !!item.isBundle;
@@ -1957,7 +1829,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /gift ─────────────────────────────────────
   {
     data: new SlashCommandBuilder()
       .setName("gift")
@@ -2002,7 +1873,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
         if (!freshUser.infiniteVbucks) addVbucks(userId, -item.price);
         updateUser(userId, { giftsGiven: (freshUser.giftsGiven ?? 0) + 1 });
         checkAndAwardAchievements(userId);
-        // Store the pending gift — item is NOT added to recipient yet
         setPendingGift(target.id, {
           fromId: userId,
           fromName: interaction.user.username,
@@ -2034,7 +1904,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /coinflip ────────────────────────────────
   {
     data: new SlashCommandBuilder().setName("coinflip").setDescription("Flip a coin — heads or tails!").addStringOption((o) => o.setName("side").setDescription("Heads or Tails?").setRequired(true).addChoices({ name: "Heads", value: "heads" }, { name: "Tails", value: "tails" })).addIntegerOption((o) => o.setName("wager").setDescription("V-Bucks to wager (50–2000)").setRequired(false).setMinValue(50).setMaxValue(2000)),
     async execute(interaction) {
@@ -2054,7 +1923,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /challenge ───────────────────────────────
   {
     data: new SlashCommandBuilder().setName("challenge").setDescription("Challenge another player to a coin flip!").addUserOption((o) => o.setName("player").setDescription("Player to challenge").setRequired(true)).addIntegerOption((o) => o.setName("wager").setDescription("V-Bucks to wager (50–2000)").setRequired(false).setMinValue(50).setMaxValue(2000)),
     async execute(interaction) {
@@ -2092,7 +1960,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /inventory ────────────────────────────────
   {
     data: new SlashCommandBuilder().setName("inventory").setDescription("View your Fortnite skin collection and items"),
     async execute(interaction) {
@@ -2116,13 +1983,11 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
           .setFooter({ text: `Page ${p+1} of ${totalPages} • ${names.length} skin(s)` })
           .setTimestamp();
 
-        // Navigation row
         const navRow = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId("inv_prev").setLabel("◀ Prev").setStyle(ButtonStyle.Secondary).setDisabled(p === 0),
           new ButtonBuilder().setCustomId("inv_next").setLabel("Next ▶").setStyle(ButtonStyle.Secondary).setDisabled(p >= totalPages-1)
         );
 
-        // Chest buttons row (only shown if user has any chests)
         const hasGod  = (cu.godChest ?? 0) > 0;
         const hasMyst = (cu.mysteriousChest ?? 0) > 0;
         const chestRow = (hasGod || hasMyst) ? new ActionRowBuilder().addComponents(
@@ -2149,7 +2014,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
           await btn.update({ embeds: [e], components: c });
         } else if (btn.customId === "inv_open_god") {
           await openGodChestInteraction(btn, userId);
-          // Refresh inventory view after a short delay
           setTimeout(async () => {
             const { embed: e, components: c } = buildInvPage(page);
             await interaction.editReply({ embeds: [e], components: c }).catch(() => {});
@@ -2170,7 +2034,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /trade ────────────────────────────────────
   {
     data: new SlashCommandBuilder().setName("trade").setDescription("Offer a skin trade with another player").addUserOption((o) => o.setName("player").setDescription("Player to trade with").setRequired(true)),
     async execute(interaction) {
@@ -2219,7 +2082,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /refund ───────────────────────────────────
   {
     data: new SlashCommandBuilder().setName("refund").setDescription("Request a refund for a skin you bought from the Item Shop"),
     async execute(interaction) {
@@ -2279,29 +2141,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
       });
     },
   },
-
-  // ── /hack ─────────────────────────────────────
-  {
-    data: new SlashCommandBuilder().setName("hack").setDescription("(Admin) Hack Epic Games — gives a player V-Bucks, Godly Luck Potions & a free Item Shop run").addUserOption((o) => o.setName("player").setDescription("Player to hack for").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-    async execute(interaction) {
-      const target = interaction.options.getUser("player", true);
-      await interaction.reply({ embeds: [new EmbedBuilder().setTitle("💻 Hacking...").setDescription("```\nBypassing Epic Games firewall...\nAccessing V-Bucks database...\nInjecting payload...\nGranting Godly potions...\nUnlocking free shop run...\n```").setColor(0x00ff00).setTimestamp()] });
-      await new Promise((r) => setTimeout(r, 2500));
-      addVbucks(target.id, 13500);
-      addInteraction(target.id);
-      const hu = getUser(target.id);
-      updateUser(target.id, {
-        godlyLuckPotion: (hu.godlyLuckPotion ?? 0) + 50,
-        hackedFreeShop: true,
-      });
-      await interaction.editReply({ embeds: [new EmbedBuilder()
-        .setTitle("✅ Hack Successful!")
-        .setDescription(`<@${target.id}> has been hacked!\n\n💰 **+13,500 V-Bucks**\n⚡ **+50 Godly Luck Potions**\n🛒 **Free Item Shop run unlocked!** *(use \`/buy\` to claim the entire shop for free — once only)*\n\n*Epic Games will never know.*`)
-        .setColor(0x00ff00).setTimestamp()] });
-    },
-  },
-
-  // ── /freevbucks ───────────────────────────────
   {
     data: new SlashCommandBuilder().setName("freevbucks").setDescription("Claim free V-Bucks from a totally legit website!"),
     async execute(interaction) {
@@ -2316,7 +2155,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /creatorcode ──────────────────────────────
   {
     data: new SlashCommandBuilder().setName("creatorcode").setDescription("Support a creator for a discount on the Item Shop").addStringOption((o) => o.setName("code").setDescription("Creator code (leave blank to remove)").setRequired(false)),
     async execute(interaction) {
@@ -2340,7 +2178,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /zeropoint ────────────────────────────────
   {
     data: new SlashCommandBuilder().setName("zeropoint").setDescription("Interact with the mysterious Zero Point orb"),
     async execute(interaction) {
@@ -2403,7 +2240,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /attack ───────────────────────────────────
   {
     data: new SlashCommandBuilder().setName("attack").setDescription("Attack another player with a weapon from your arsenal").addUserOption((o) => o.setName("target").setDescription("Player to attack").setRequired(true)).addStringOption((o) => o.setName("weapon").setDescription("Weapon to use").setRequired(true).setAutocomplete(true)),
     autocomplete: async (interaction) => {
@@ -2468,7 +2304,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /reboot ───────────────────────────────────
   {
     data: new SlashCommandBuilder().setName("reboot").setDescription("Reboot a downed player for 299 V-Bucks").addUserOption((o) => o.setName("player").setDescription("Player to reboot").setRequired(true)),
     async execute(interaction) {
@@ -2486,7 +2321,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /useluckpotion ────────────────────────────
   {
     data: new SlashCommandBuilder().setName("useluckpotion").setDescription("Use a luck potion on yourself or another player!").addStringOption((o) => o.setName("type").setDescription("Which luck potion?").setRequired(true).addChoices({ name: "🍀 Luck Potion (+15%)", value: "luckPotion" }, { name: "🔮 Xtra Luck Potion (+40%)", value: "xtraLuckPotion" }, { name: "⚡ Godly Luck Potion (+80%)", value: "godlyLuckPotion" })).addUserOption((o) => o.setName("player").setDescription("Player to give the luck boost to (default: yourself)").setRequired(false)),
     async execute(interaction) {
@@ -2507,7 +2341,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /skinalogue ───────────────────────────────
   {
     data: new SlashCommandBuilder().setName("skinalogue").setDescription("Browse all catchable Fortnite skins").addStringOption((o) => o.setName("search").setDescription("Filter by name").setRequired(false)),
     async execute(interaction) {
@@ -2535,7 +2368,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /llama ────────────────────────────────────
   {
     data: new SlashCommandBuilder().setName("llama").setDescription("Open a Supply Llama! 1-hour cooldown — great random rewards inside"),
     async execute(interaction) {
@@ -2583,7 +2415,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /fish ─────────────────────────────────────
   {
     data: new SlashCommandBuilder().setName("fish").setDescription("Grab your fishing rod and head to a named location! 15-minute cooldown").addStringOption((o) => o.setName("location").setDescription("Where to fish").setRequired(false).addChoices(...FISH_SPOTS.slice(0,10).map((s) => ({ name: s, value: s })))),
     async execute(interaction) {
@@ -2607,7 +2438,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /battlepass ───────────────────────────────
   {
     data: new SlashCommandBuilder().setName("battlepass").setDescription("View your Battle Pass progress and tier rewards"),
     async execute(interaction) {
@@ -2622,7 +2452,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /stormwatch ───────────────────────────────
   {
     data: new SlashCommandBuilder().setName("stormwatch").setDescription("Check the storm — you might be safe, or you might be in it! 10-minute cooldown"),
     async execute(interaction) {
@@ -2644,7 +2473,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /supply_drop ──────────────────────────────
   {
     data: new SlashCommandBuilder().setName("supply_drop").setDescription("Call in a Supply Drop from the Battle Bus! 30-minute cooldown"),
     async execute(interaction) {
@@ -2677,7 +2505,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /build ────────────────────────────────────
   {
     data: new SlashCommandBuilder().setName("build").setDescription("Build a structure for protection").addStringOption((o) => o.setName("material").setDescription("Building material").setRequired(true).addChoices({ name: "🪵 Wood — 50 V-Bucks (1 hit)", value: "wood" }, { name: "🧱 Brick — 125 V-Bucks (2 hits)", value: "brick" }, { name: "⚙️ Metal — 250 V-Bucks (3 hits)", value: "metal" })),
     async execute(interaction) {
@@ -2692,7 +2519,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /medkit ───────────────────────────────────
   {
     data: new SlashCommandBuilder().setName("medkit").setDescription("Use a medkit to cut your elimination time in half (costs 100 V-Bucks)"),
     async execute(interaction) {
@@ -2707,7 +2533,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /spy ──────────────────────────────────────
   {
     data: new SlashCommandBuilder().setName("spy").setDescription("Spy on another player to see their public bot stats").addUserOption((o) => o.setName("player").setDescription("Player to spy on").setRequired(true)),
     async execute(interaction) {
@@ -2723,7 +2548,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /duel ─────────────────────────────────────
   {
     data: new SlashCommandBuilder().setName("duel").setDescription("Challenge someone to a 1v1 skin or V-Bucks duel!").addUserOption((o) => o.setName("player").setDescription("Player to duel").setRequired(true)).addStringOption((o) => o.setName("wager").setDescription("What to wager").setRequired(false).addChoices({ name: "💰 V-Bucks (500)", value: "vbucks" }, { name: "🎮 A Skin from inventory", value: "skin" })),
     async execute(interaction) {
@@ -2796,7 +2620,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /leaderboard ──────────────────────────────
   {
     data: new SlashCommandBuilder().setName("leaderboard").setDescription("View top players ranked by skins, V-Bucks, or level"),
     async execute(interaction) {
@@ -2827,7 +2650,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /daily ────────────────────────────────────
   {
     data: new SlashCommandBuilder().setName("daily").setDescription("Claim your daily V-Bucks reward — streaks add bonus V-Bucks!"),
     async execute(interaction) {
@@ -2848,7 +2670,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /achievements ─────────────────────────────
   {
     data: new SlashCommandBuilder().setName("achievements").setDescription("View your achievements"),
     async execute(interaction) {
@@ -2876,7 +2697,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /musicpass ────────────────────────────────
   {
     data: new SlashCommandBuilder().setName("musicpass").setDescription("Purchase today's Music Pass — 1 exclusive Icon Series skin! Refreshes every 24 hours"),
     async execute(interaction) {
@@ -2918,7 +2738,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /savetheworld ─────────────────────────────
   {
     data: new SlashCommandBuilder().setName("savetheworld").setDescription("View and claim your Save The World quests"),
     async execute(interaction) {
@@ -2933,7 +2752,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
           .setColor(0xff6600).setTimestamp()] });
         return;
       }
-      // Initialize baseline if not set
       if (!user.stwQuestBaseline || Object.keys(user.stwQuestBaseline).length === 0) {
         const baseline = {};
         for (const q of STW_QUESTS) baseline[q.stat] = user[q.stat] ?? 0;
@@ -2941,7 +2759,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
       }
       const freshUser = getUser(userId);
       const quests = getStwQuestProgress(freshUser);
-      // Check if all done — reset cycle
       if (quests.every(q => q.done)) {
         const newBaseline = {};
         for (const q of STW_QUESTS) newBaseline[q.stat] = freshUser[q.stat] ?? 0;
@@ -2997,7 +2814,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /founderspack ─────────────────────────────
   {
     data: new SlashCommandBuilder().setName("founderspack").setDescription("Open a Founders Box to earn exclusive rewards"),
     async execute(interaction) {
@@ -3019,7 +2835,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
           .setColor(0xffd700).setTimestamp()] });
         return;
       }
-      // Show open button
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("fb_open").setLabel(`📦 Open Founders Box (${user.foundersBoxes} available)`).setStyle(ButtonStyle.Success)
       );
@@ -3035,25 +2850,21 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
         const roll = Math.random();
         let title, desc, color;
         if (roll < 0.03) {
-          // 3% — Infinite V-Bucks
           updateUser(userId, { infiniteVbucks: true });
           title = "⚡ JACKPOT — Infinite V-Bucks!";
           desc = "You cracked open the box and found **INFINITE V-BUCKS**!\n\n⚡ Your balance is now unlimited. Spend freely!";
           color = 0xffd700;
         } else if (roll < 0.13) {
-          // 10% — God Chest
           updateUser(userId, { godChest: (getUser(userId).godChest ?? 0) + 1 });
           title = "🌟 God Chest!";
           desc = "You found a **God Chest** inside the Founders Box!\n\n🌟 Use it from your profile — it contains extraordinary loot.";
           color = 0xffd700;
         } else if (roll < 0.33) {
-          // 20% — Mysterious Chest
           updateUser(userId, { mysteriousChest: (getUser(userId).mysteriousChest ?? 0) + 1 });
           title = "🔵 Mysterious Chest!";
           desc = "A **Mysterious Chest** tumbled out of the Founders Box!\n\n🔵 Open it from your profile for a surprise reward.";
           color = 0x4444ff;
         } else {
-          // 67% — V-Bucks roll
           const vb = rollFoundersBoxVbucks();
           addVbucks(userId, vb);
           title = "💰 V-Bucks!";
@@ -3071,7 +2882,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /equip ────────────────────────────────────
   {
     data: new SlashCommandBuilder().setName("equip").setDescription("Equip up to 2 skins from your locker — equipped bundle skins give 35% off that bundle (max 70%)"),
     async execute(interaction) {
@@ -3081,7 +2891,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
       const user = getUser(userId);
       const allBundles = await getAllBundles();
 
-      // Find skins the user owns that belong to a bundle
       const bundleSkinMap = {}; // skinId prefix → bundle name
       for (const bundle of allBundles) {
         for (const s of (bundle.skins ?? [])) {
@@ -3089,10 +2898,8 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
         }
       }
 
-      // Match user inventory against bundle skin ids
       const ownedBundleSkins = [];
       for (const [key, name] of Object.entries(user.inventoryNames ?? {})) {
-        // key format: "skinId_timestamp" — strip suffix
         const skinId = key.replace(/_\d+$/, "");
         if (bundleSkinMap[skinId]) {
           ownedBundleSkins.push({ key, name, skinId, bundleName: bundleSkinMap[skinId] });
@@ -3112,14 +2919,12 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
         ? equipped.map((id, i) => `**Slot ${i+1}:** ${user.inventoryNames[id] ?? id}`).join("\n")
         : "None equipped";
 
-      // Build select menu (max 25 options)
       const options = ownedBundleSkins.slice(0, 23).map(s =>
         new StringSelectMenuOptionBuilder()
           .setLabel(s.name.slice(0, 100))
           .setDescription(`Bundle: ${s.bundleName} ${equipped.includes(s.key) ? "— ✅ Equipped" : ""}`.slice(0, 100))
           .setValue(s.key)
       );
-      // Add unequip-all option
       options.push(new StringSelectMenuOptionBuilder().setLabel("❌ Unequip All Skins").setDescription("Remove all equipped skins").setValue("unequip_all"));
 
       const row = new ActionRowBuilder().addComponents(
@@ -3146,7 +2951,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
         }
 
         if (currentEquipped.includes(val)) {
-          // Unequip
           currentEquipped = currentEquipped.filter(x => x !== val);
           updateUser(userId, { equippedSkins: currentEquipped });
           const skinName = cu.inventoryNames[val] ?? val;
@@ -3155,11 +2959,9 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
           await sel.reply({ content: "❌ You already have **2 skins equipped** (the maximum). Unequip one first!", ephemeral: true });
           return;
         } else {
-          // Equip
           currentEquipped.push(val);
           updateUser(userId, { equippedSkins: currentEquipped });
           const skinName = cu.inventoryNames[val] ?? val;
-          // Find which bundle and how much discount
           const skinIdClean = val.replace(/_\d+$/, "");
           const bundleName = bundleSkinMap[skinIdClean] ?? "a bundle";
           const discount = currentEquipped.filter(id => bundleSkinMap[id.replace(/_\d+$/, "")] === bundleName).length * 35;
@@ -3174,81 +2976,42 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /buyvbucks ───────────────────────────────
   {
     data: new SlashCommandBuilder()
       .setName("buyvbucks")
       .setDescription("Purchase V-Bucks using your Epic Games card"),
     async execute(interaction) {
       const userId = interaction.user.id;
-      const user = getUser(userId);
+      const COOLDOWN_MS = 2 * 60 * 60 * 1000;
+      const lastUsed = purchaseCooldowns.get(`vbucks_${userId}`) ?? 0;
+      const remaining = COOLDOWN_MS - (Date.now() - lastUsed);
+      if (remaining > 0) {
+        const h = Math.floor(remaining / 3600000), m = Math.floor((remaining % 3600000) / 60000), s = Math.floor((remaining % 60000) / 1000);
+        await interaction.reply({ ephemeral: true, embeds: [new EmbedBuilder().setTitle("⏳ Cooldown Active").setDescription(`You can only purchase V-Bucks once every **2 hours**.
 
-      // ── Step 1: card not linked yet ─────────────────────────────────────
-      if (!user.cardLinked) {
-        const modal = new ModalBuilder()
-          .setCustomId("buyvbucks_card_modal")
-          .setTitle("💳 Link Epic Games Card");
-        const cardInput = new TextInputBuilder()
-          .setCustomId("card_number")
-          .setLabel("Enter your Epic Games card number")
-          .setStyle(TextInputStyle.Short)
-          .setPlaceholder("XXXX-XXXX-XXXX")
-          .setRequired(true);
-        modal.addComponents(new ActionRowBuilder().addComponents(cardInput));
-        await interaction.showModal(modal);
-
-        const submitted = await interaction.awaitModalSubmit({ time: 90000 }).catch(() => null);
-        if (!submitted) return;
-
-        const entered = submitted.fields.getTextInputValue("card_number").trim();
-        const correct = "6767-6767-6767";
-        if (entered.replace(/\s/g, "") !== correct.replace(/-/g, "") && entered !== correct) {
-          await submitted.reply({
-            embeds: [new EmbedBuilder()
-              .setTitle("❌ Card Declined")
-              .setDescription("That card number is invalid.\nEpic Games cards use the format **XXXX-XXXX-XXXX**.\n\nTry again with `/buyvbucks`.")
-              .setColor(0xff0000).setTimestamp()],
-            ephemeral: true,
-          });
-          return;
-        }
-
-        await submitted.deferReply({ ephemeral: true });
-        await new Promise((r) => setTimeout(r, 2000));
-        await submitted.editReply({
-          embeds: [new EmbedBuilder()
-            .setTitle("⏳ Linking Card...")
-            .setDescription("```\nVerifying card...\nConnecting to Epic Games servers...\nAuthenticating...\n```")
-            .setColor(0xffaa00).setTimestamp()],
-        });
-        await new Promise((r) => setTimeout(r, 2500));
-
-        updateUser(userId, { cardLinked: true, cardBalance: 1000000 });
-
-        await submitted.editReply({
-          embeds: [new EmbedBuilder()
-            .setTitle("✅ Card Linked Successfully!")
-            .setDescription("Your **Epic Games card** has been linked!\n\n💳 **Card balance:** 1,000,000 V-Bucks\n\nRun `/buyvbucks` again to purchase V-Bucks!\n\n⚠️ **WARNING: Do NOT enter your real card information. This bot is for entertainment only.**")
-            .setColor(0x00d4ff).setTimestamp()],
-        });
+⏱️ **Time remaining:** ${h}h ${m}m ${s}s`).setColor(0xff6600).setTimestamp()], ephemeral: true });
         return;
       }
-
-      // ── Step 2: card already linked — show purchase options ──────────────
-      await interaction.deferReply({ ephemeral: true });
-      const freshUser = getUser(userId);
-      const cardBal = freshUser.cardBalance ?? 1000000;
-
-      if (cardBal <= 0) {
-        await interaction.editReply({
-          embeds: [new EmbedBuilder()
-            .setTitle("💳 Card Empty")
-            .setDescription("Your Epic Games card has **0 V-Bucks** remaining.\n\nUse `/topup` with your employee ID to reload your card (max **1,000,000 V-Bucks**).")
-            .setColor(0xff6600).setTimestamp()],
-        });
+      const modal = new ModalBuilder().setCustomId("buyvbucks_auth_modal").setTitle("💳 Verify Payment");
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("card_number").setLabel("Epic Games Card Number").setStyle(TextInputStyle.Short).setPlaceholder("XXXX-XXXX-XXXX").setRequired(true)),
+        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("employee_id").setLabel("Epic Games Employee ID").setStyle(TextInputStyle.Short).setPlaceholder("Enter your employee ID").setRequired(true))
+      );
+      await interaction.showModal(modal);
+      const submitted = await interaction.awaitModalSubmit({ time: 90000 }).catch(() => null);
+      if (!submitted) return;
+      const enteredCard = submitted.fields.getTextInputValue("card_number").trim().replace(/\s/g, "");
+      const enteredId = submitted.fields.getTextInputValue("employee_id").trim();
+      const correctCard = "6767-6767-6767";
+      const correctId = "77767774422006769";
+      const cardOk = enteredCard === correctCard.replace(/-/g, "") || enteredCard === correctCard;
+      const idOk = enteredId === correctId;
+      if (!cardOk || !idOk) {
+        await submitted.reply({ embeds: [new EmbedBuilder().setTitle("❌ Payment Declined").setDescription(!cardOk ? "That card number is invalid. Use format **XXXX-XXXX-XXXX**." : "That employee ID is not recognized in the Epic Games system.").setColor(0xff0000).setTimestamp()], ephemeral: true });
         return;
       }
-
+      await submitted.deferReply({ ephemeral: true });
+      await new Promise((r) => setTimeout(r, 1500));
       const row1 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("bv_1000").setLabel("1,000 V-Bucks").setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId("bv_2800").setLabel("2,800 V-Bucks").setStyle(ButtonStyle.Primary),
@@ -3259,125 +3022,77 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
         new ButtonBuilder().setCustomId("bv_22500").setLabel("22,500 V-Bucks").setStyle(ButtonStyle.Success),
         new ButtonBuilder().setCustomId("bv_55000").setLabel("55,000 V-Bucks").setStyle(ButtonStyle.Danger),
       );
+      const shopMsg = await submitted.editReply({
+        embeds: [new EmbedBuilder().setTitle("💳 Buy V-Bucks — Epic Games Card").setDescription(`✅ **Card verified!**
 
-      const shopMsg = await interaction.editReply({
-        embeds: [new EmbedBuilder()
-          .setTitle("💳 Buy V-Bucks — Epic Games Card")
-          .setDescription(`Select how many V-Bucks you'd like to purchase:\n\n💳 **Card balance:** ${cardBal.toLocaleString()} V-Bucks\n\n⚠️ **Reminder: This bot is for entertainment only. Do NOT use real card info.**`)
-          .setColor(0x00d4ff).setTimestamp()],
+🏢 **Employee ID:** \`${correctId}\`
+💳 **Card:** \`6767-6767-****\`
+
+Select how many V-Bucks you'd like to purchase:`).setColor(0x00d4ff).setTimestamp()],
         components: [row1, row2],
         fetchReply: true,
       });
-
       const amountMap = { bv_1000: 1000, bv_2800: 2800, bv_5000: 5000, bv_13500: 13500, bv_22500: 22500, bv_55000: 55000 };
       const pkgCollector = shopMsg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 60000, filter: (b) => b.user.id === userId });
-
       pkgCollector.on("collect", async (btn) => {
         const chosenAmount = amountMap[btn.customId];
         if (!chosenAmount) return;
         pkgCollector.stop();
-
-        const latestUser = getUser(userId);
-        const latestBal = latestUser.cardBalance ?? 1000000;
-
-        if (chosenAmount > latestBal) {
-          await btn.update({
-            embeds: [new EmbedBuilder()
-              .setTitle("❌ Insufficient Card Balance")
-              .setDescription(`You tried to buy **${chosenAmount.toLocaleString()} V-Bucks** but your card only has **${latestBal.toLocaleString()} V-Bucks** remaining.\n\nUse \`/topup\` to reload your card.`)
-              .setColor(0xff0000).setTimestamp()],
-            components: [],
-          });
-          return;
-        }
-
         const confirmRow = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId("bv_yes").setLabel("✅ Yes, buy now").setStyle(ButtonStyle.Success),
           new ButtonBuilder().setCustomId("bv_no").setLabel("❌ No, cancel").setStyle(ButtonStyle.Danger),
           new ButtonBuilder().setCustomId("bv_gift").setLabel("🎁 Wanna Gift?").setStyle(ButtonStyle.Secondary),
         );
-
         await btn.update({
-          embeds: [new EmbedBuilder()
-            .setTitle(`💳 Confirm — ${chosenAmount.toLocaleString()} V-Bucks`)
-            .setDescription(`Are you sure you want to purchase **${chosenAmount.toLocaleString()} V-Bucks**?\n\n💳 **Card balance:** ${latestBal.toLocaleString()} V-Bucks\n📉 **After purchase:** ${(latestBal - chosenAmount).toLocaleString()} V-Bucks\n\n> This card has a maximum of **1,000,000 V-Bucks**. To top up, use \`/topup\`.`)
-            .setColor(0xffaa00).setTimestamp()],
+          embeds: [new EmbedBuilder().setTitle(`💳 Confirm — ${chosenAmount.toLocaleString()} V-Bucks`).setDescription(`Are you sure you want to purchase **${chosenAmount.toLocaleString()} V-Bucks**?
+
+🏢 **Employee ID:** \`${correctId}\`
+💳 **Card:** \`6767-6767-****\``).setColor(0xffaa00).setTimestamp()],
           components: [confirmRow],
         });
-
         const confirmCollector = shopMsg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 60000, filter: (b) => b.user.id === userId });
         confirmCollector.on("collect", async (cb) => {
           confirmCollector.stop();
-
           if (cb.customId === "bv_no") {
-            await cb.update({ embeds: [new EmbedBuilder().setTitle("❌ Purchase Cancelled").setDescription("No V-Bucks were charged to your card.").setColor(0x888888).setTimestamp()], components: [] });
+            await cb.update({ embeds: [new EmbedBuilder().setTitle("❌ Purchase Cancelled").setDescription("No V-Bucks were charged.").setColor(0x888888).setTimestamp()], components: [] });
             return;
           }
-
           if (cb.customId === "bv_yes") {
-            const u = getUser(userId);
-            updateUser(userId, { cardBalance: Math.max(0, (u.cardBalance ?? 1000000) - chosenAmount) });
             addVbucks(userId, chosenAmount);
+            purchaseCooldowns.set(`vbucks_${userId}`, Date.now());
             const after = getUser(userId);
-            await cb.update({
-              embeds: [new EmbedBuilder()
-                .setTitle("✅ Purchase Successful!")
-                .setDescription(`**+${chosenAmount.toLocaleString()} V-Bucks** added to your balance!\n\n💰 **New V-Bucks balance:** ${after.infiniteVbucks ? "∞" : after.vbucks.toLocaleString()}\n💳 **Card balance remaining:** ${(after.cardBalance ?? 0).toLocaleString()} V-Bucks`)
-                .setColor(0x00d4ff).setTimestamp()],
-              components: [],
-            });
+            await cb.update({ embeds: [new EmbedBuilder().setTitle("✅ Purchase Successful!").setDescription(`**+${chosenAmount.toLocaleString()} V-Bucks** added to your balance!
+
+💰 **New V-Bucks balance:** ${after.infiniteVbucks ? "∞" : after.vbucks.toLocaleString()}
+
+🏢 **Employee ID:** \`${correctId}\`
+💳 **Card:** \`6767-6767-****\``).setColor(0x00d4ff).setTimestamp()], components: [] });
             return;
           }
-
           if (cb.customId === "bv_gift") {
-            const giftRow = new ActionRowBuilder().addComponents(
-              new UserSelectMenuBuilder()
-                .setCustomId("bv_gift_user")
-                .setPlaceholder("Select a player to gift V-Bucks to...")
-                .setMinValues(1).setMaxValues(1)
-            );
-            await cb.update({
-              embeds: [new EmbedBuilder()
-                .setTitle(`🎁 Gift ${chosenAmount.toLocaleString()} V-Bucks`)
-                .setDescription("Select who you want to send the V-Bucks to!")
-                .setColor(0xffd700).setTimestamp()],
-              components: [giftRow],
-            });
-
+            const giftRow = new ActionRowBuilder().addComponents(new UserSelectMenuBuilder().setCustomId("bv_gift_user").setPlaceholder("Select a player to gift V-Bucks to...").setMinValues(1).setMaxValues(1));
+            await cb.update({ embeds: [new EmbedBuilder().setTitle(`🎁 Gift ${chosenAmount.toLocaleString()} V-Bucks`).setDescription("Select who you want to send the V-Bucks to!").setColor(0xffd700).setTimestamp()], components: [giftRow] });
             const giftCollector = shopMsg.createMessageComponentCollector({ componentType: ComponentType.UserSelect, time: 60000, filter: (b) => b.user.id === userId });
             giftCollector.on("collect", async (sel) => {
               giftCollector.stop();
               const targetId = sel.values[0];
-              if (targetId === userId) {
-                await sel.update({ content: "❌ You can't gift V-Bucks to yourself!", embeds: [], components: [] });
-                return;
-              }
-              const u = getUser(userId);
-              if (chosenAmount > (u.cardBalance ?? 0)) {
-                await sel.update({ embeds: [new EmbedBuilder().setTitle("❌ Insufficient card balance").setColor(0xff0000).setTimestamp()], components: [] });
-                return;
-              }
-              updateUser(userId, { cardBalance: Math.max(0, (u.cardBalance ?? 1000000) - chosenAmount) });
+              if (targetId === userId) { await sel.update({ content: "❌ You can't gift V-Bucks to yourself!", embeds: [], components: [] }); return; }
               addVbucks(targetId, chosenAmount);
-              const after = getUser(userId);
-              await sel.update({
-                embeds: [new EmbedBuilder()
-                  .setTitle("🎁 V-Bucks Gifted!")
-                  .setDescription(`You gifted **${chosenAmount.toLocaleString()} V-Bucks** to <@${targetId}>!\n\n💳 **Card balance remaining:** ${(after.cardBalance ?? 0).toLocaleString()} V-Bucks`)
-                  .setColor(0xffd700).setTimestamp()],
-                components: [],
-              });
+              purchaseCooldowns.set(`vbucks_${userId}`, Date.now());
+              await sel.update({ embeds: [new EmbedBuilder().setTitle("🎁 V-Bucks Gifted!").setDescription(`You gifted **${chosenAmount.toLocaleString()} V-Bucks** to <@${targetId}>!
+
+🏢 **Employee ID:** \`${correctId}\`
+💳 **Card:** \`6767-6767-****\``).setColor(0xffd700).setTimestamp()], components: [] });
             });
             giftCollector.on("end", (_, r) => { if (r === "time") shopMsg.edit({ components: [] }).catch(() => {}); });
           }
         });
         confirmCollector.on("end", (_, r) => { if (r === "time") shopMsg.edit({ components: [] }).catch(() => {}); });
       });
-      pkgCollector.on("end", (_, r) => { if (r === "time") interaction.editReply({ components: [] }).catch(() => {}); });
+      pkgCollector.on("end", (_, r) => { if (r === "time") submitted.editReply({ components: [] }).catch(() => {}); });
     },
   },
 
-  // ── /topup ────────────────────────────────────
   {
     data: new SlashCommandBuilder()
       .setName("topup")
@@ -3387,7 +3102,7 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
       const user = getUser(userId);
 
       if (!user.cardLinked) {
-        await interaction.reply({
+        await interaction.reply({ ephemeral: true,
           embeds: [new EmbedBuilder()
             .setTitle("❌ No Card Linked")
             .setDescription("You haven't linked an Epic Games card yet.\n\nUse `/buyvbucks` first to link your card.")
@@ -3414,7 +3129,7 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
 
       const enteredId = submitted.fields.getTextInputValue("employee_id").trim();
       if (enteredId !== "77767774422006769") {
-        await submitted.reply({
+        await submitted.reply({ ephemeral: true,
           embeds: [new EmbedBuilder()
             .setTitle("❌ Invalid Employee ID")
             .setDescription("That employee ID is not recognized in the Epic Games system.\n\nDouble-check your ID and try `/topup` again.")
@@ -3511,8 +3226,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  // ── /crew ─────────────────────────────────────
-  // Crew can ONLY be obtained through the spawn channel.
   {
     data: new SlashCommandBuilder().setName("crew").setDescription("Learn about the Fortnite Crew Pack"),
     async execute(interaction) {
@@ -3528,9 +3241,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 ];
-// ─────────────────────────────────────────────
-//  Command registration + Discord client
-// ─────────────────────────────────────────────
 const commandMap = new Map(commands.map((c) => [c.data.name, c]));
 
 async function registerCommands(token, clientId) {
@@ -3569,7 +3279,6 @@ client.once("clientReady", async () => {
   console.log("✅ Bot ready — SQLite database active");
 });
 
-// Removed duplicate interactionCreate handler
 client.on("interactionCreate", async interaction => {
 
   if (!interaction.isButton()) return;
@@ -3612,7 +3321,6 @@ client.on("interactionCreate", async interaction => {
 
   chest.claimed.push(interaction.user.id);
 
-  // 2% empty chance
   if (Math.random() <= 0.02) {
     return interaction.reply({
       content: "📦 The chest was empty...",
@@ -3624,7 +3332,6 @@ client.on("interactionCreate", async interaction => {
     chest.remaining / (chest.maxPeople - chest.claimed.length + 1)
   );
 
-  // jackpot
   if (Math.random() <= 0.005) {
     reward = chest.remaining;
   }
@@ -3640,11 +3347,7 @@ client.on("interactionCreate", async interaction => {
 });
 
 
-// ===== FINAL FIX PATCH =====
 
-// ================================
-// FIXED LIVE GIFTS DATABASE
-// ================================
 
 const LIVE_GIFTS = {
   tiktokstars: { name: "TikTok Stars", coins: 39999, emoji: "⭐" },
@@ -3662,11 +3365,7 @@ const LIVE_GIFTS = {
   privatejet: { name: "Private Jet", coins: 4888, emoji: "🛩️" }
 };
 
-// ================================
-// FIXED TREASURE CHESTS
-// ================================
 
-// removed duplicate treasureChests declaration
 
 
 client.on("interactionCreate", async interaction => {
@@ -3739,11 +3438,8 @@ client.on("interactionCreate", async interaction => {
   });
 });
 
-// ================================
-// FIXED /TREASURECHEST COMMAND
-// ================================
 
-{
+commands.push({
   data: new SlashCommandBuilder()
     .setName("treasurechest")
     .setDescription("Create a treasure chest")
@@ -3805,4 +3501,4 @@ client.on("interactionCreate", async interaction => {
       components: [row]
     });
   }
-}
+});
