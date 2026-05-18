@@ -3242,6 +3242,29 @@ Select how many V-Bucks you'd like to purchase:`).setColor(0x00d4ff).setTimestam
 ];
 const commandMap = new Map(commands.map((c) => [c.data.name, c]));
 
+client.on("interactionCreate", async interaction => {
+  if (interaction.isChatInputCommand()) {
+    const command = commandMap.get(interaction.commandName);
+    if (!command) return;
+    try {
+      await command.execute(interaction);
+    } catch (err) {
+      console.error("[cmd error]", err);
+      const msg = { content: "❌ Something went wrong.", ephemeral: true };
+      if (interaction.replied || interaction.deferred) await interaction.followUp(msg).catch(() => {});
+      else await interaction.reply(msg).catch(() => {});
+    }
+    return;
+  }
+  if (interaction.isAutocomplete()) {
+    const command = commandMap.get(interaction.commandName);
+    if (!command?.autocomplete) return;
+    try { await command.autocomplete(interaction); } catch (err) { console.error("[autocomplete error]", err); }
+    return;
+  }
+});
+
+
 async function registerCommands(token, clientId) {
   try {
     const rest = new REST({ version: "10" }).setToken(token);
