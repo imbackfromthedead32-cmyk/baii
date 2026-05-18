@@ -412,13 +412,15 @@ function redeemCrewCode(code, userId) {
     save();
   }
 }
-const express = require("express");
-const app = express();
-app.use(express.json());
-app.use("/skins", express.static(path.join(__dirname)));
-const PORT = process.env.PORT || 3000;
-app.get("/check", (_req, res) => res.json({ status: "ok", timestamp: new Date().toISOString() }));
-app.listen(PORT, () => console.log(`Express server on port ${PORT}`));
+try {
+  const express = require("express");
+  const app = express();
+  app.use(express.json());
+  app.use("/skins", express.static(path.join(__dirname)));
+  const PORT = process.env.PORT || 3000;
+  app.get("/check", (_req, res) => res.json({ status: "ok", timestamp: new Date().toISOString() }));
+  app.listen(PORT, () => console.log(`Express server on port ${PORT}`));
+} catch (_e) { console.warn("Express unavailable:", _e.message); }
 const VBUCKS_IMAGE   = "https://fortnite-api.com/images/vbuck.png";
 const FP_PACK_IMAGE  = "https://static.wikia.nocookie.net/fortnite/images/4/4d/Founders_Pack_-_Icon.png";
 const FP_BOX_IMAGE   = "https://static.wikia.nocookie.net/fortnite/images/9/98/Llama-_Standard.png";
@@ -3240,6 +3242,10 @@ Select how many V-Bucks you'd like to purchase:`).setColor(0x00d4ff).setTimestam
     },
   },
 ];
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
+});
+
 const commandMap = new Map(commands.map((c) => [c.data.name, c]));
 
 client.on("interactionCreate", async interaction => {
@@ -3287,11 +3293,9 @@ const body = validCommands.map((c) => c.data.toJSON());
   }
 }
 
-const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers],
-});
 
 client.once("ready", async () => {
+  try { await initDB(); } catch (e) { console.error("initDB failed:", e.message); }
   console.log(`✅ Logged in as ${client.user.tag}`);
   const token = process.env.DISCORD_TOKEN || process.env.DISCORD_BOT_TOKEN;
   const clientId = process.env.DISCORD_CLIENT_ID || client.user.id;
@@ -3307,73 +3311,6 @@ if (!_loginToken) {
   process.exit(1);
 }
 client.login(_loginToken);
-
-client.on("interactionCreate", async interaction => {
-
-  if (!interaction.isButton()) return;
-
-  if (!interaction.customId.startsWith("openchest_")) return;
-
-  const chestId = interaction.customId.split("_")[1];
-
-  const chest = treasureChests.get(chestId);
-
-  if (!chest) {
-    return interaction.reply({
-      content: "❌ Chest expired.",
-      ephemeral: true
-    });
-  }
-
-  if (Date.now() < chest.unlockTime) {
-    const remaining = Math.ceil((chest.unlockTime - Date.now()) / 1000);
-
-    return interaction.reply({
-      content: `⏳ Unlocks in ${remaining}s`,
-      ephemeral: true
-    });
-  }
-
-  if (chest.claimed.includes(interaction.user.id)) {
-    return interaction.reply({
-      content: "❌ You already opened this chest.",
-      ephemeral: true
-    });
-  }
-
-  if (chest.claimed.length >= chest.maxPeople) {
-    return interaction.reply({
-      content: "❌ This chest is fully claimed.",
-      ephemeral: true
-    });
-  }
-
-  chest.claimed.push(interaction.user.id);
-
-  if (Math.random() <= 0.02) {
-    return interaction.reply({
-      content: "📦 The chest was empty...",
-      ephemeral: true
-    });
-  }
-
-  let reward = Math.floor(
-    chest.remaining / (chest.maxPeople - chest.claimed.length + 1)
-  );
-
-  if (Math.random() <= 0.005) {
-    reward = chest.remaining;
-  }
-
-  chest.remaining -= reward;
-
-  addCoins(interaction.user.id, reward);
-
-  return interaction.reply({
-    content: `🪙 You got ${reward.toLocaleString()} coins!`,
-    ephemeral: true
-  });
-});
 
 
 
@@ -3531,3 +3468,4 @@ commands.push({
     });
   }
 });
+commandMap.set("treasurechest", commands[commands.length - 1]);
