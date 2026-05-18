@@ -12,8 +12,7 @@ const path = require("path");
 const pg   = require("pg");
 
 if (!process.env.DATABASE_URL) {
-  console.error("FATAL: DATABASE_URL is not set. The bot cannot start without a database — all V-Bucks and user data would be lost on every restart.");
-  process.exit(1);
+  console.warn("⚠️ DATABASE_URL not set — user data will not persist across restarts.");
 }
 
 const _pool = new pg.Pool({
@@ -3266,10 +3265,10 @@ const body = validCommands.map((c) => c.data.toJSON());
 }
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers],
 });
 
-client.once("clientReady", async () => {
+client.once("ready", async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
   const token = process.env.DISCORD_TOKEN || process.env.DISCORD_BOT_TOKEN;
   const clientId = process.env.DISCORD_CLIENT_ID || client.user.id;
@@ -3278,6 +3277,13 @@ client.once("clientReady", async () => {
   initSpawner(client);
   console.log("✅ Bot ready — SQLite database active");
 });
+
+const _loginToken = process.env.DISCORD_TOKEN || process.env.DISCORD_BOT_TOKEN;
+if (!_loginToken) {
+  console.error("FATAL: DISCORD_TOKEN is not set. Set it in Railway environment variables.");
+  process.exit(1);
+}
+client.login(_loginToken);
 
 client.on("interactionCreate", async interaction => {
 
