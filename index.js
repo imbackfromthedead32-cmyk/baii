@@ -634,7 +634,8 @@ const CUSTOM_SKINS = [
   { id:"custom_tyla",              name:"Tyla",                     description:"Hello this is Kitty!",        rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1511449135440461884/file_00000000ec44720aa0c39e1beebe3520-removebg-preview.png?ex=6a207e33&is=6a1f2cb3&hm=6581aa1065b6e6523bdc55ac071f0a81110a4602ffe3d910e76bb345fa0935fe&", isStw:false, isCustom:true },
   { id:"custom_impact_mil_stream",   name:"Impact Becca",  description:"Six seven!",          rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1511491351605153854/file_0000000057a071f49938b5ee27633bd4-removebg-preview.png?ex=6a20a584&is=6a1f5404&hm=f28eff22fe7fa4a161c3219fff9bb4af7406dc326c222c6c7d5b5c0bb58e4167&", isStw:false, isCustom:true },
   { id:"custom_impact_mil_becca",   name:"Becca",  description:"Your fav barbie streamer!",          rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1511491351923916880/file_000000002d0c71f4a92b8162a4f26bd6-removebg-preview.png?ex=6a20a584&is=6a1f5404&hm=df6558eb9af734df8016b828d73a5a48f25db5bc5afb6a31507c1e53c598d79f&", isStw:false, isCustom:true },
-
+  { id:"custom_impact_mil_beccca",   name:"Becca Wardolf",  description:"Burn it.",          rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1511497944556241047/file_0000000081b472468e6f04f45f8401ba-removebg-preview.png?ex=6a20aba8&is=6a1f5a28&hm=5ba3912d7c1f1ccf91831a465fd26d862381c7a71a0b9a9d0e4ea75deef50692&", isStw:false, isCustom:true },
+  
 ];
 const STATIC_BUNDLES = [
   {
