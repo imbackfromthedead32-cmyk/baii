@@ -629,6 +629,9 @@ const CUSTOM_SKINS = [
   { id:"custom_lara_pinkyup",     name:"Lara (PINKY UP)",     description:"I bet it goes like this.",                     rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1504292227235447045/Screenshot_20260514_011053_CapCut-removebg-preview.png?ex=6a0674cf&is=6a05234f&hm=5eb96d02e15d02cad654fbaaaa17cf74eba8fd84dc1e755fcfd8138698bd929a&", isStw:false, isCustom:true },
   { id:"custom_daniela_pinkyup",  name:"Daniela (PINKY UP)",  description:"Us against the world shake and shake in the parking lot.", rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1504292276845940848/Screenshot_20260514_011145_CapCut-removebg-preview.png?ex=6a0674db&is=6a05235b&hm=2f6199f81e1076c6af712197fbc5b8c2c7983dc92c5a2799a6bdcaf8b8117b97&", isStw:false, isCustom:true },
   { id:"custom_megan_pinkyup",    name:"Megan (PINKY UP)",    description:"No can touch em if they tried.",              rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1504292277160382554/Screenshot_20260514_011243_CapCut-removebg-preview.png?ex=6a0674db&is=6a05235b&hm=2bf017ff773b8411a75b2d2f0c0fa2bf95d377217759f275d94d4df7d50e8ca1&", isStw:false, isCustom:true },
+  { id:"custom_impact_sorceress",  name:"Impact Sorceress",         description:"I want to make an impact.",   rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1511449134794805279/file_00000000df007246b688b895c02e70fe-removebg-preview.png?ex=6a207e33&is=6a1f2cb3&hm=a847d609d04ba1b083773ed8d5179e23f26a65f014c8efae8136eab3cd0ac861&", isStw:false, isCustom:true },
+  { id:"custom_impact_mil_tyla",   name:"Impact Millionaire Tyla",  description:"I'm a millionaire.",          rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1511449135083950201/file_000000007b28720a809a433afdc4ec25-removebg-preview.png?ex=6a207e33&is=6a1f2cb3&hm=192fbe4cc352d462f2a02e8a3b844db791b686d54b0df8040d4b6dd934db3f08&", isStw:false, isCustom:true },
+  { id:"custom_tyla",              name:"Tyla",                     description:"Hello this is Kitty!",        rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1511449135440461884/file_00000000ec44720aa0c39e1beebe3520-removebg-preview.png?ex=6a207e33&is=6a1f2cb3&hm=6581aa1065b6e6523bdc55ac071f0a81110a4602ffe3d910e76bb345fa0935fe&", isStw:false, isCustom:true },
 ];
 const STATIC_BUNDLES = [
   {
@@ -661,6 +664,19 @@ const STATIC_BUNDLES = [
       { id: "custom_lara_pinkyup",     name: "Lara (PINKY UP)"     },
       { id: "custom_daniela_pinkyup",  name: "Daniela (PINKY UP)"  },
       { id: "custom_megan_pinkyup",    name: "Megan (PINKY UP)"    },
+    ],
+  },
+  {
+    id: "bundle_impact",
+    name: "Impact Bundle",
+    rarity: "Icon",
+    imageUrl: "https://cdn.discordapp.com/attachments/1244713742281871380/1511450460266172536/images-1.png?ex=6a207f6f&is=6a1f2def&hm=ece8d8b4bcd73c68a0fd1e61e6109549c63c912de50764e802f20ba6a831f2d1&",
+    price: BUNDLE_PRICE,
+    isBundle: true,
+    skins: [
+      { id: "custom_impact_sorceress", name: "Impact Sorceress"        },
+      { id: "custom_impact_mil_tyla",  name: "Impact Millionaire Tyla" },
+      { id: "custom_tyla",             name: "Tyla"                    },
     ],
   },
 ];
