@@ -755,23 +755,44 @@ function getSpawnPercent(rarity) {
   return (((RARITY_WEIGHTS[rarity.toLowerCase()] ?? 15) / total) * 100).toFixed(1);
 }
 async function getIconSkins() { const s = await fetchFortniteSkins(); return s.filter(s => { const r = s.rarity.toLowerCase(); return r === "icon" || r === "icon series"; }); }
+const CREW_SKIN_NAMES = [
+  "Galaxia","Green Arrow","Vi","Llambro","Alli","Deimos","Mecha Cuddle Master",
+  "Loki Laufeyson","Summer Skye","The Burning Wolf","Chaos Origins","Sierra",
+  "Cube Assassin","Snow Stealth Slone","Aftermath","Tracy Trouble","Sayara",
+  "Southpaw","Mecha Strike Commander","Phaedra","Wolverine Zero","Loveless",
+  "Red Claw","Inkquisitor","Joni the Red","Gildhart","Sylvie","Rift Knight Kieran",
+  "Triarch Nox","Dahlia","Styx","Breezabelle","Princess Lexa","Prince Orin",
+  "Astrea","Shimmerdusk","Drakon Steel Hybrid","Skull Scout","Silas Hesk",
+  "Lana Llane","Katt","Ares","Spirit Hunter Saeko","Jing","Persephone",
+  "The Operator","Dali","Polus","Kyran Aryk","Lady of Cranes","Durrr Taisho",
+  "Haruka of the Mask","Bones","Nyangelica","Ayla Winn","Sakara","Damon","Corascana",
+];
 async function getCrewSkin() {
   const skins = await fetchFortniteSkins();
-  const crew = skins.filter(s => { const r = s.rarity.toLowerCase(); return r === "crew" || r === "crew series"; });
-  if (crew.length) return { ...crew[Math.floor(Math.random()*crew.length)], rarity: "Crew Series" };
-  const fallback = skins[Math.floor(Math.random()*skins.length)];
-  return { ...fallback, rarity: "Crew Series" };
+  const crewPool = skins.filter(s => CREW_SKIN_NAMES.some(n => s.name.toLowerCase() === n.toLowerCase()));
+  if (crewPool.length) return { ...crewPool[Math.floor(Math.random()*crewPool.length)], rarity: "Crew Series" };
+  const apiCrew = skins.filter(s => { const r = s.rarity.toLowerCase(); return r === "crew" || r === "crew series"; });
+  if (apiCrew.length) return { ...apiCrew[Math.floor(Math.random()*apiCrew.length)], rarity: "Crew Series" };
+  return { ...skins[Math.floor(Math.random()*skins.length)], rarity: "Crew Series" };
 }
 function generateCrewCode() {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
   const seg = () => Array.from({length:4}, () => chars[Math.floor(Math.random()*chars.length)]).join("");
   return `${seg()}-${seg()}-${seg()}-${seg()}`;
 }
+const MUSIC_PASS_SKIN_NAMES = [
+  "The Weeknd","Lady Gaga","Billie Eilish","James Hetfield","Lars Ulrich",
+  "Kirk Hammett","Robert Trujillo","Karol G","Neko Hatsune Miku","Sabrina Carpenter",
+  "Bruno Mars","Sedona","Jana Pastel","Laufey","Chappell Roan","Lover Girl Laufey",
+  "Ariana Grande",
+];
 async function getMusicPass() {
   const data = getMusicPassData();
   if (data.skin && Date.now() - data.lastReset < MUSIC_PASS_RESET_MS) return data.skin;
-  const iconSkins = await getIconSkins();
-  const pool = iconSkins.length ? iconSkins : await fetchFortniteSkins();
+  const allSkins = await fetchFortniteSkins();
+  const musicPool = allSkins.filter(s => MUSIC_PASS_SKIN_NAMES.some(n => s.name.toLowerCase().includes(n.toLowerCase())));
+  const iconPool = allSkins.filter(s => { const r = s.rarity.toLowerCase(); return r === "icon" || r === "icon series"; });
+  const pool = musicPool.length ? musicPool : (iconPool.length ? iconPool : allSkins);
   const skin = pool[Math.floor(Math.random() * pool.length)];
   setMusicPass(skin);
   return skin;
@@ -961,43 +982,40 @@ async function spawnCrew(client, guildId, channelId) {
   const channel = client.channels.cache.get(channelId);
   if (!channel) return false;
   try {
-    const code = generateCrewCode();
-    addCrewCode(code);
     const crewSkin = await getCrewSkin();
+    const musicSkin = await getMusicPass();
+    const spawnId = `${Date.now()}`;
     const embed = new EmbedBuilder()
-      .setTitle("👑 Fortnite Crew Pack Spawned!")
-      .setDescription(`An exclusive **Fortnite Crew Pack** has appeared!\n\n**Includes:**\n💰 **1,000 V-Bucks**\n🎵 **Music Pass** (24 hours)\n🎮 **${crewSkin ? crewSkin.name : "Exclusive Crew Skin"}** *(Crew Series)*\n\n\`\`\`${code}\`\`\`\n\nClick **Redeem Crew Code** to claim!`)
+      .setTitle("👑 Nitebot Crew has dropped!")
+      .setDescription(`**Nitebot Crew** has appeared!\n\n**Includes:**\n💰 **800 V-Bucks**\n🎮 **${crewSkin ? crewSkin.name : "Exclusive Crew Skin"}** *(Crew Series)*\n🎵 **${musicSkin ? musicSkin.name : "Music Pass Skin"}** *(Music Pass)*\n\n⏰ Expires in **24 hours** — after it expires, scout to see if another drops!\n\nClick **Claim Crew** to collect!`)
       .setColor(0x4169e1)
-      .setFooter({ text: "Crew Pack • First come, first served!" })
+      .setFooter({ text: "Nitebot Crew • First come, first served!" })
       .setTimestamp();
+    if (crewSkin?.imageUrl) embed.setImage(crewSkin.imageUrl);
     const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(`crew_redeem_${code}`).setLabel("👑 Redeem Crew Code").setStyle(ButtonStyle.Primary)
+      new ButtonBuilder().setCustomId(`crew_claim_${spawnId}`).setLabel("👑 Claim Crew").setStyle(ButtonStyle.Primary)
     );
     const msg = await channel.send({ embeds: [embed], components: [row] });
-    activeSpawns[guildId] = { type: "crew", code, channelId, messageId: msg.id, claimedBy: null };
+    activeSpawns[guildId] = { type: "crew", spawnId, channelId, messageId: msg.id, claimedBy: null };
     const collector = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 24 * 60 * 60 * 1000 });
     collector.on("collect", async (btn) => {
-      if (!btn.customId.startsWith("crew_redeem_")) return;
-      const btnCode = btn.customId.replace("crew_redeem_", "");
-      const codeData = getCrewCode(btnCode);
-      if (!codeData || codeData.used) { await btn.reply({ content: "❌ This crew code has already been redeemed!", ephemeral: true }); return; }
-      redeemCrewCode(btnCode, btn.user.id);
-      collector.stop("redeemed");
+      if (!btn.customId.startsWith("crew_claim_")) return;
+      const spawn = activeSpawns[guildId];
+      if (!spawn || spawn.claimedBy) { await btn.reply({ content: "❌ This Crew has already been claimed!", ephemeral: true }); return; }
+      spawn.claimedBy = btn.user.id;
+      collector.stop("claimed");
       delete activeSpawns[guildId];
       const rUserId = btn.user.id;
-      addVbucks(rUserId, 1000);
+      addVbucks(rUserId, 800);
       updateUser(rUserId, { hasMusicPass: true, musicPassExpiry: Date.now() + 24 * 60 * 60 * 1000 });
       if (crewSkin) addSkinToInventory(rUserId, crewSkin.id + "_crew_" + Date.now(), crewSkin.name + " (Crew)");
+      if (musicSkin) addSkinToInventory(rUserId, musicSkin.id + "_musicpass_crew_" + Date.now(), musicSkin.name + " 🎵");
       const updated = getUser(rUserId);
-      try {
-        const dm = await btn.user.createDM();
-        await dm.send({ embeds: [new EmbedBuilder().setTitle("👑 Your Fortnite Crew Code").setDescription(`Welcome to the Crew!\n\n**Your Crew Code:**\n\`\`\`${btnCode}\`\`\`\n\n**Rewards received:**\n💰 +1,000 V-Bucks\n🎵 Music Pass (24 hours)\n🎮 ${crewSkin ? crewSkin.name + " (Crew Series)" : "Crew Series Skin"}\n\n*Keep this code safe!*`).setColor(0x4169e1).setTimestamp()] });
-      } catch { /* DMs closed */ }
-      await btn.update({ embeds: [new EmbedBuilder().setTitle("👑 Crew Code Redeemed!").setDescription(`Welcome to the Crew, <@${rUserId}>!\n\n💰 **+1,000 V-Bucks** added!\n🎵 **Music Pass** activated (24 hours)!\n🎮 **${crewSkin ? crewSkin.name : "Crew Skin"}** (Crew Series) added!\n\n💳 **Balance:** ${updated.infiniteVbucks ? "∞" : updated.vbucks.toLocaleString()} V-Bucks\n\n📬 **Your code was sent to your DMs!**`).setColor(0x4169e1).setTimestamp()], components: [] });
+      await btn.update({ embeds: [new EmbedBuilder().setTitle("👑 Crew Claimed!").setDescription(`Welcome to Nitebot Crew, <@${rUserId}>!\n\n💰 **+800 V-Bucks** added!\n🎮 **${crewSkin ? crewSkin.name : "Crew Skin"}** (Crew Series) added!\n🎵 **${musicSkin ? musicSkin.name : "Music Skin"}** (Music Pass) added!\n\n💳 **Balance:** ${updated.infiniteVbucks ? "∞" : updated.vbucks.toLocaleString()} V-Bucks\n\n⏰ Your Crew expires in **24 hours** — scout for a new drop after it expires!`).setColor(0x4169e1).setTimestamp()], components: [] });
       if (botClient) scheduleNextSpawn(botClient, guildId, channelId);
     });
     collector.on("end", (_, r) => {
-      if (r !== "redeemed") {
+      if (r !== "claimed") {
         delete activeSpawns[guildId];
         if (botClient) scheduleNextSpawn(botClient, guildId, channelId);
       }
@@ -2726,6 +2744,7 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
       const collector = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 2*60*1000, filter: (b) => b.user.id === userId });
       collector.on("collect", async (btn) => {
         const freshUser = getUser(userId);
+        if (freshUser.hasMusicPass && (freshUser.musicPassExpiry ?? 0) > Date.now()) { await btn.reply({ content: "❌ You own Crew — the Music Pass skin is already included in your Crew. You don't need to buy it separately!", ephemeral: true }); return; }
         if (isMusicPassPurchaser(userId)) { await btn.reply({ content: "❌ You already purchased today's Music Pass!", ephemeral: true }); return; }
         if (!freshUser.infiniteVbucks && freshUser.vbucks < MUSIC_PASS_COST) { await btn.reply({ content: `❌ Need **1,000 V-Bucks** but you only have **${freshUser.vbucks.toLocaleString()}**.`, ephemeral: true }); return; }
         if (!freshUser.infiniteVbucks) addVbucks(userId, -MUSIC_PASS_COST);
@@ -3228,16 +3247,16 @@ Select how many V-Bucks you'd like to purchase:`).setColor(0x00d4ff).setTimestam
   },
 
   {
-    data: new SlashCommandBuilder().setName("crew").setDescription("Learn about the Fortnite Crew Pack"),
+    data: new SlashCommandBuilder().setName("crew").setDescription("Learn about Nitebot Crew"),
     async execute(interaction) {
       await interaction.deferReply();
       resetQuestsIfNeeded(interaction.user.id); addInteraction(interaction.user.id);
       const channelId = getSpawnChannel(interaction.guildId ?? "");
       await interaction.editReply({ embeds: [new EmbedBuilder()
-        .setTitle("👑 Fortnite Crew")
-        .setDescription("**You cannot purchase Crew with real money on a Discord bot.**\n\n> Discord bots don't support payment processors or real currency.\n\n**How to get Crew:**\n\nKeep an eye on the spawn channel — a **\uD83D\uDC51 Crew Pack** will occasionally spawn!\n\nWhen it appears, click **Redeem Crew Code** to claim:\n\n\uD83D\uDCB0 **1,000 V-Bucks**\n\uD83C\uDFB5 **Music Pass** *(24 hours)*\n\uD83C\uDFAE **Exclusive Crew Series skin**\n\n" + (channelId ? "\uD83D\uDC40 Watch <#" + channelId + "> for the next spawn!" : "\u2699\uFE0F Ask an admin to set up a spawn channel with `/setup`."))
+        .setTitle("👑 Nitebot Crew")
+        .setDescription("**How to get Nitebot Crew:**\n\nKeep an eye on the spawn channel — **👑 Nitebot Crew** will occasionally drop!\n\nWhen it appears, click **Claim Crew** to collect:\n\n💰 **800 V-Bucks**\n🎮 **Exclusive Crew Series skin**\n🎵 **Current Music Pass skin** *(included free!)*\n\n⏰ Crew expires after **24 hours** — scout for a new drop after it expires!\n\n" + (channelId ? "👀 Watch <#" + channelId + "> for the next drop!" : "⚙️ Ask an admin to set up a spawn channel with `/setup`."))
         .setColor(0x4169e1)
-        .setFooter({ text: "👑 Crew is earned, not bought — watch for spawns!" })
+        .setFooter({ text: "👑 Nitebot Crew — watch for drops!" })
         .setTimestamp()] });
     },
   },
@@ -3270,6 +3289,13 @@ client.on("interactionCreate", async interaction => {
   }
 });
 
+client.on("messageCreate", async (message) => {
+  if (message.author.bot) return;
+  const content = message.content.trim().toLowerCase();
+  if (content === "buy") {
+    try { await handleBuyMessage(message); } catch (err) { console.error("[buy] error:", err); }
+  }
+});
 
 async function registerCommands(token, clientId) {
   try {
