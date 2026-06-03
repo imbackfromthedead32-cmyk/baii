@@ -521,6 +521,7 @@ const VALID_CODES = {
   tylajadee:      { displayName: "Tylajadee",      discount: 0.1, freeSkin: true },
   ultravioletkaty:{ displayName: "ultravioletkaty", discount: 0.1 },
   clovel:         { displayName: "Clovel",          discount: 0.2 },
+  beccal0uise:    { displayName: "beccal0uise",     discount: 0.1 },
 };
 const DAILY_QUESTS = [
   { id: "catch_skins",    label: "Catch 3 spawned skins",            xpReward: 300, required: 3 },
@@ -678,9 +679,24 @@ const STATIC_BUNDLES = [
     price: BUNDLE_PRICE,
     isBundle: true,
     skins: [
-      { id: "custom_impact_sorceress", name: "Impact Sorceress"        },
-      { id: "custom_impact_mil_tyla",  name: "Impact Millionaire Tyla" },
-      { id: "custom_tyla",             name: "Tyla"                    },
+      { id: "custom_impact_sorceress",  name: "Impact Sorceress"        },
+      { id: "custom_impact_mil_tyla",   name: "Impact Millionaire Tyla" },
+      { id: "custom_tyla",              name: "Tyla"                    },
+      { id: "custom_impact_mil_stream", name: "Impact Becca"            },
+      { id: "custom_impact_mil_becca",  name: "Becca"                   },
+      { id: "custom_impact_mil_beccca", name: "Becca Wardolf"           },
+    ],
+  },
+  {
+    id: "bundle_forever_duo",
+    name: "Forever Duo Bundle",
+    rarity: "Icon",
+    imageUrl: "https://cdn.discordapp.com/attachments/1244713742281871380/1511449135440461884/file_00000000ec44720aa0c39e1beebe3520-removebg-preview.png?ex=6a207e33&is=6a1f2cb3&hm=6581aa1065b6e6523bdc55ac071f0a81110a4602ffe3d910e76bb345fa0935fe&",
+    price: 1700,
+    isBundle: true,
+    skins: [
+      { id: "custom_tyla",             name: "Tyla" },
+      { id: "custom_impact_mil_becca", name: "Becca" },
     ],
   },
 ];
@@ -752,7 +768,7 @@ function weightedRandom(skins) {
 async function getRandomSkin() { const s = await fetchFortniteSkins(); return weightedRandom(s); }
 async function getStwSkins() { if (cachedStwSkins.length) return cachedStwSkins; await fetchFortniteSkins(); return cachedStwSkins; }
 async function getRandomStwSkin() { const s = await getStwSkins(); return s.length ? s[Math.floor(Math.random() * s.length)] : null; }
-async function getRandomShopSkins(n = 5) { const s = await fetchFortniteSkins(); return [...s].sort(() => Math.random() - 0.5).slice(0, n); }
+async function getRandomShopSkins(n = 10) { const s = await fetchFortniteSkins(); return [...s].sort(() => Math.random() - 0.5).slice(0, n); }
 async function findSkinByName(query) {
   const skins = await fetchFortniteSkins(), q = query.trim().toLowerCase();
   const exact = skins.find((s) => s.name.toLowerCase() === q);
@@ -820,8 +836,11 @@ async function getMusicPass() {
 async function ensureShopFresh() {
   const shop = getItemShop();
   if (shop.skins.length > 0 && Date.now() - shop.lastReset < SHOP_RESET_MS) return shop.skins;
-  const skins = await getRandomShopSkins(5);
-  const shopSkins = skins.map((s) => ({ skinId: s.id, name: s.name, rarity: s.rarity, imageUrl: s.imageUrl, price: SKIN_PRICE }));
+  const skins = await getRandomShopSkins(10);
+  const shopSkins = skins.map((s) => {
+    const bonusVbucks = Math.random() < 0.05 ? 800 : 0;
+    return { skinId: s.id, name: s.name, rarity: s.rarity, imageUrl: s.imageUrl, price: SKIN_PRICE, ...(bonusVbucks ? { bonusVbucks } : {}) };
+  });
   setItemShop(shopSkins);
   return shopSkins;
 }
@@ -929,16 +948,18 @@ async function spawnBundle(client, guildId, channelId) {
   try {
     const bundles = await getAllBundles();
     const bundle = bundles[Math.floor(Math.random() * bundles.length)];
+    const bonusVbucks = Math.random() < 0.05 ? 800 : 0;
     const skinLines = bundle.skins.map(s => `• **${s.name}**`).join("\n");
+    const bonusLine = bonusVbucks ? `\n💎 **BONUS: +${bonusVbucks} V-Bucks included!**` : "";
     const embed = new EmbedBuilder()
       .setTitle(`🎁 **${bundle.name}** Bundle has spawned!`)
-      .setDescription(`An exclusive **${bundle.name}** has appeared!\n\n**Includes:**\n${skinLines}\n\n💰 **Value: ${bundle.price.toLocaleString()} V-Bucks**\n\nType \`buy\` to claim all skins!`)
+      .setDescription(`An exclusive **${bundle.name}** has appeared!\n\n**Includes:**\n${skinLines}${bonusLine}\n\n💰 **Value: ${bundle.price.toLocaleString()} V-Bucks**\n\nType \`buy\` to claim all skins!`)
       .setColor(getRarityColor(bundle.rarity))
       .setFooter({ text: "Bundle Spawn • First come, first served!" })
       .setTimestamp();
     if (bundle.imageUrl) embed.setImage(bundle.imageUrl);
     const msg = await channel.send({ embeds: [embed] });
-    activeSpawns[guildId] = { type: "bundle", bundle, channelId, messageId: msg.id, claimedBy: null };
+    activeSpawns[guildId] = { type: "bundle", bundle, bonusVbucks, channelId, messageId: msg.id, claimedBy: null };
     return true;
   } catch { return false; }
 }
@@ -1070,8 +1091,10 @@ async function handleBuyMessage(message) {
 
   if (spawn.type === "bundle" && spawn.bundle) {
     for (const s of spawn.bundle.skins) addSkinToInventory(userId, s.id + "_bundle_" + Date.now(), s.name);
+    if (spawn.bonusVbucks) addVbucks(userId, spawn.bonusVbucks);
     const na = checkAndAwardAchievements(userId);
     let desc = `<@${userId}> snagged the **${spawn.bundle.name}**! 🎁\n\n**Got:** ${spawn.bundle.skins.map(s=>`**${s.name}**`).join(", ")}\n\n+50 XP earned!`;
+    if (spawn.bonusVbucks) desc += `\n\n💎 **BONUS: +${spawn.bonusVbucks} V-Bucks!**`;
     if (gainedVbucks) desc += `\n\n🎉 **Milestone!** +250 V-Bucks bonus!`;
     if (na.length) desc += `\n\n🏆 **Achievement Unlocked!** ${na.join(", ")}`;
     embed = new EmbedBuilder().setTitle(`🎁 ${message.author.username} claimed the ${spawn.bundle.name}!`).setDescription(desc).setColor(getRarityColor(spawn.bundle.rarity)).setTimestamp();
@@ -1153,405 +1176,11 @@ function getStwQuestProgress(user) {
     return { ...q, progress: Math.max(0, progress), done, claimable: !done && progress >= q.goal };
   });
 }
-const activeLives = new Map();
-const treasureChests = new Map();
-const purchaseCooldowns = new Map(); // key: "coins_<uid>" or "vbucks_<uid>"
-
-
-
-function getCoins(userId) {
-  const u = getUser(userId);
-  return u.coins ?? 0;
-}
-
-function addCoins(userId, amount) {
-  const u = getUser(userId);
-  updateUser(userId, {
-    coins: Math.max(0, (u.coins ?? 0) + amount)
-  });
-}
+const activeDiscounts = new Map(); // key: skinId, value: { percent, expiresAt, displayName }
 
 
 const commands = [
 
-{
-  data: new SlashCommandBuilder()
-    .setName("buycoins")
-    .setDescription("Purchase coins")
-    .addIntegerOption(option =>
-      option
-        .setName("amount")
-        .setDescription("Amount of coins to buy")
-        .setRequired(true)
-    ),
-
-  async execute(interaction) {
-    const userId = interaction.user.id;
-    const COOLDOWN_MS = 2 * 60 * 60 * 1000;
-    const lastUsed = purchaseCooldowns.get(`coins_${userId}`) ?? 0;
-    const remaining = COOLDOWN_MS - (Date.now() - lastUsed);
-    if (remaining > 0) {
-      const h = Math.floor(remaining / 3600000), m = Math.floor((remaining % 3600000) / 60000), s = Math.floor((remaining % 60000) / 1000);
-      await interaction.reply({ ephemeral: true, embeds: [new EmbedBuilder().setTitle("⏳ Cooldown Active").setDescription(`You can only purchase coins once every **2 hours**.
-
-⏱️ **Time remaining:** ${h}h ${m}m ${s}s`).setColor(0xff6600).setTimestamp()], ephemeral: true });
-      return;
-    }
-    const amount = interaction.options.getInteger("amount", true);
-    const modal = new ModalBuilder().setCustomId("buycoins_auth_modal").setTitle("💳 Verify Payment");
-    modal.addComponents(
-      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("card_number").setLabel("Epic Games Card Number").setStyle(TextInputStyle.Short).setPlaceholder("XXXX-XXXX-XXXX").setRequired(true)),
-      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("employee_id").setLabel("Epic Games Employee ID").setStyle(TextInputStyle.Short).setPlaceholder("Enter your employee ID").setRequired(true))
-    );
-    await interaction.showModal(modal);
-    const submitted = await interaction.awaitModalSubmit({ time: 90000 }).catch(() => null);
-    if (!submitted) return;
-    const enteredCard = submitted.fields.getTextInputValue("card_number").trim().replace(/\s/g, "");
-    const enteredId = submitted.fields.getTextInputValue("employee_id").trim();
-    const correctCard = "6767-6767-6767";
-    const correctId = "77767774422006769";
-    const cardOk = enteredCard === correctCard.replace(/-/g, "") || enteredCard === correctCard;
-    const idOk = enteredId === correctId;
-    if (!cardOk || !idOk) {
-      await submitted.reply({ embeds: [new EmbedBuilder().setTitle("❌ Payment Declined").setDescription(!cardOk ? "That card number is invalid. Use format **XXXX-XXXX-XXXX**." : "That employee ID is not recognized.").setColor(0xff0000).setTimestamp()], ephemeral: true });
-      return;
-    }
-    await submitted.deferReply({ ephemeral: true });
-    await new Promise((r) => setTimeout(r, 1500));
-    addCoins(userId, amount);
-    purchaseCooldowns.set(`coins_${userId}`, Date.now());
-    await submitted.editReply({ embeds: [new EmbedBuilder().setTitle("🪙 Coins Purchased!").setDescription(`Successfully purchased **${amount.toLocaleString()} coins**!
-
-🏢 **Employee ID:** \`${correctId}\`
-💳 **Card:** \`6767-6767-****\`
-
-🪙 **New balance:** ${getCoins(userId).toLocaleString()} coins`).setColor(0xffd700).setTimestamp()] });
-  },
-},
-
-{
-  data: new SlashCommandBuilder()
-    .setName("coins")
-    .setDescription("Check your coin balance"),
-  async execute(interaction) {
-    const coins = getCoins(interaction.user.id);
-
-    await interaction.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setTitle("🪙 Coin Balance")
-          .setDescription(`You have **${coins.toLocaleString()} coins**`)
-          .setColor(0xffd700)
-      ]
-    });
-  },
-},
-
-
-{
-  data: new SlashCommandBuilder()
-    .setName("golive")
-    .setDescription("Start a live stream"),
-  async execute(interaction) {
-
-    if (activeLives.has(interaction.user.id)) {
-      return interaction.reply({
-        content: "❌ You're already live.",
-        ephemeral: true
-      });
-    }
-
-    activeLives.set(interaction.user.id, {
-      started: Date.now(),
-      gifts: 0,
-      viewers: new Set(),
-      agency: false
-    });
-
-    await interaction.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setTitle("🔴 LIVE STARTED")
-          .setDescription("People can now `/enterlive` and send gifts!")
-          .setColor(0xff0000)
-      ]
-    });
-  },
-},
-
-
-{
-  data: new SlashCommandBuilder()
-    .setName("agencylive")
-    .setDescription("Start an agency live"),
-  async execute(interaction) {
-
-    const user = getUser(interaction.user.id);
-
-    if (!user.inAgency) {
-      return interaction.reply({
-        content: "❌ You are not in Impact Agency.",
-        ephemeral: true
-      });
-    }
-
-    activeLives.set(interaction.user.id, {
-      started: Date.now(),
-      gifts: 0,
-      viewers: new Set(),
-      agency: true
-    });
-
-    await interaction.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setTitle("🏢 AGENCY LIVE STARTED")
-          .setDescription("15% fee enabled.")
-          .setColor(0x00d4ff)
-      ]
-    });
-  },
-},
-
-
-{
-  data: new SlashCommandBuilder()
-    .setName("enterlive")
-    .setDescription("Join someone's live")
-    .addUserOption(o =>
-      o.setName("creator")
-      .setDescription("Creator")
-      .setRequired(true)
-    ),
-
-  async execute(interaction) {
-
-    const creator = interaction.options.getUser("creator", true);
-
-    const live = activeLives.get(creator.id);
-
-    if (!live) {
-      return interaction.reply({
-        content: "❌ They are not live.",
-        ephemeral: true
-      });
-    }
-
-    live.viewers.add(interaction.user.id);
-
-    await interaction.reply({
-      content: `✅ Entered ${creator.username}'s live.`,
-      ephemeral: true
-    });
-  },
-},
-
-
-
-{
-  data: new SlashCommandBuilder()
-    .setName("coingift")
-    .setDescription("Send a TikTok style gift")
-    .addUserOption(o =>
-      o.setName("creator")
-      .setDescription("Creator")
-      .setRequired(true)
-    )
-    .addStringOption(o =>
-      o.setName("gift")
-      .setDescription("Gift to send")
-      .setRequired(true)
-      .addChoices(
-        { name: "⭐ TikTok Stars — 99", value: "tiktokstars" },
-        { name: "🐱 Leon The Kitten — 299", value: "leonkitten" },
-        { name: "🏠 TikTok House — 999", value: "tiktokhouse" },
-        { name: "✈️ Flying Jet — 19,999", value: "flyingjet" },
-        { name: "🦁 Lion — 29,999", value: "lion" },
-        { name: "🌌 TikTok Universe — 34,999", value: "universe" }
-      )
-    ),
-
-  async execute(interaction) {
-
-    const creator = interaction.options.getUser("creator", true);
-    const giftKey = interaction.options.getString("gift", true);
-
-    const gift = LIVE_GIFTS[giftKey];
-
-    if (!gift) {
-      return interaction.reply({
-        content: "❌ Invalid gift.",
-        ephemeral: true
-      });
-    }
-
-    const live = activeLives.get(creator.id);
-
-    if (!live) {
-      return interaction.reply({
-        content: "❌ That creator is not live.",
-        ephemeral: true
-      });
-    }
-
-    if (!live.viewers.has(interaction.user.id)) {
-      return interaction.reply({
-        content: "❌ You must enter their live first.",
-        ephemeral: true
-      });
-    }
-
-    if (getCoins(interaction.user.id) < gift.coins) {
-      return interaction.reply({
-        content: `❌ You need ${gift.coins.toLocaleString()} coins.`,
-        ephemeral: true
-      });
-    }
-
-    addCoins(interaction.user.id, -gift.coins);
-
-    const fee = live.agency ? 0.15 : 0.35;
-    const creatorGets = Math.floor(gift.coins * (1 - fee));
-
-    addCoins(creator.id, creatorGets);
-
-    live.gifts += creatorGets;
-
-    await interaction.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setTitle(`${gift.icon} Gift Sent`)
-          .setDescription(
-            `You sent **${gift.name}** to ${creator.username}
-
-Gift Value: **${gift.coins.toLocaleString()} coins**
-Creator Receives: **${creatorGets.toLocaleString()} coins**`
-          )
-          .setColor(0xff2d55)
-      ]
-    });
-  },
-},
-
-{
-  data: new SlashCommandBuilder()
-    .setName("endlive")
-    .setDescription("End your live"),
-  async execute(interaction) {
-
-    const live = activeLives.get(interaction.user.id);
-
-    if (!live) {
-      return interaction.reply({
-        content: "❌ You are not live.",
-        ephemeral: true
-      });
-    }
-
-    activeLives.delete(interaction.user.id);
-
-    await interaction.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setTitle("📊 Live Analytics")
-          .setDescription(
-            `Coins earned: **${live.gifts.toLocaleString()}**\nViewers: **${live.viewers.size}**`
-          )
-          .setColor(0x00ff00)
-      ]
-    });
-  },
-},
-
-
-{
-  data: new SlashCommandBuilder()
-    .setName("joinagency")
-    .setDescription("Join Impact Agency"),
-
-  async execute(interaction) {
-
-    const user = getUser(interaction.user.id);
-
-    if ((user.vbucks ?? 0) < 10000) {
-      return interaction.reply({
-        content: "❌ You need 10,000 V-Bucks.",
-        ephemeral: true
-      });
-    }
-
-    updateUser(interaction.user.id, {
-      inAgency: true,
-      agencyName: "Impact Agency"
-    });
-
-    await interaction.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setTitle("🏢 Joined Impact Agency")
-          .setDescription("You now qualify for reduced live fees.")
-          .setColor(0x00d4ff)
-      ]
-    });
-  },
-},
-
-
-{
-  data: new SlashCommandBuilder()
-    .setName("treasurechest")
-    .setDescription("Spawn a treasure chest")
-    .addIntegerOption(o =>
-      o.setName("coins")
-      .setDescription("Coin amount")
-      .setRequired(true)
-    )
-    .addIntegerOption(o =>
-      o.setName("people")
-      .setDescription("Max openings")
-      .setRequired(true)
-    )
-    .addIntegerOption(o =>
-      o.setName("minutes")
-      .setDescription("Duration")
-      .setRequired(true)
-    ),
-
-  async execute(interaction) {
-
-    const coins = interaction.options.getInteger("coins", true);
-    const people = interaction.options.getInteger("people", true);
-    const minutes = interaction.options.getInteger("minutes", true);
-
-    const chestId = `${interaction.id}`;
-
-    treasureChests.set(chestId, {
-      remaining: coins,
-      maxPeople: people,
-      opened: []
-    });
-
-    const embed = new EmbedBuilder()
-      .setTitle("🪙 Treasure Chest")
-      .setDescription(
-        `Coins: **${coins.toLocaleString()}**\nOpeners: **0/${people}**\nExpires: **${minutes} minutes**`
-      )
-      .setThumbnail("https://cdn.discordapp.com/attachments/1247303459359690805/1505279164289388544/Fx_CoinChest.webp")
-      .setColor(0xffd700);
-
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`openchest_${chestId}`)
-        .setLabel("🪙 Open Chest")
-        .setStyle(ButtonStyle.Success)
-    );
-
-    await interaction.reply({
-      embeds: [embed],
-      components: [row]
-    });
-  },
-},
 
 
 
@@ -1593,11 +1222,12 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
   },
 
   {
-    data: new SlashCommandBuilder().setName("resetshop").setDescription("Force the Item Shop to reset with 5 new skins").setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+    data: new SlashCommandBuilder().setName("resetshop").setDescription("Force the Item Shop to reset with 10 new skins").setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
     async execute(interaction) {
       await interaction.deferReply({ ephemeral: true });
-      const skins = await getRandomShopSkins(5);
+      const skins = await getRandomShopSkins(10);
       setItemShop(skins.map((s) => ({ skinId: s.id, name: s.name, rarity: s.rarity, imageUrl: s.imageUrl, price: SKIN_PRICE })));
+      activeDiscounts.clear();
       const lines = skins.map((s) => `${getRarityEmoji(s.rarity)} **${s.name}** · ${s.rarity}`);
       await interaction.editReply({ embeds: [new EmbedBuilder().setTitle("🛒 Item Shop Reset!").setDescription(`New skins:\n\n${lines.join("\n")}`).setColor(0x00d4ff).setTimestamp()] });
     },
@@ -1629,12 +1259,17 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
   },
 
   {
-    data: new SlashCommandBuilder().setName("release").setDescription("Force specific skins or bundles into the Item Shop (up to 5)")
+    data: new SlashCommandBuilder().setName("release").setDescription("Force specific skins or bundles into the Item Shop (up to 10)")
       .addStringOption(o => o.setName("slot1").setDescription("Skin or bundle name").setRequired(true).setAutocomplete(true))
       .addStringOption(o => o.setName("slot2").setDescription("Skin or bundle name").setRequired(false).setAutocomplete(true))
       .addStringOption(o => o.setName("slot3").setDescription("Skin or bundle name").setRequired(false).setAutocomplete(true))
       .addStringOption(o => o.setName("slot4").setDescription("Skin or bundle name").setRequired(false).setAutocomplete(true))
       .addStringOption(o => o.setName("slot5").setDescription("Skin or bundle name").setRequired(false).setAutocomplete(true))
+      .addStringOption(o => o.setName("slot6").setDescription("Skin or bundle name").setRequired(false).setAutocomplete(true))
+      .addStringOption(o => o.setName("slot7").setDescription("Skin or bundle name").setRequired(false).setAutocomplete(true))
+      .addStringOption(o => o.setName("slot8").setDescription("Skin or bundle name").setRequired(false).setAutocomplete(true))
+      .addStringOption(o => o.setName("slot9").setDescription("Skin or bundle name").setRequired(false).setAutocomplete(true))
+      .addStringOption(o => o.setName("slot10").setDescription("Skin or bundle name").setRequired(false).setAutocomplete(true))
       .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
     autocomplete: async (interaction) => {
       const focused = interaction.options.getFocused().toLowerCase();
@@ -1646,7 +1281,7 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
     async execute(interaction) {
       await interaction.deferReply({ ephemeral: true });
-      const slots = ["slot1","slot2","slot3","slot4","slot5"].map(s => interaction.options.getString(s)).filter(Boolean);
+      const slots = ["slot1","slot2","slot3","slot4","slot5","slot6","slot7","slot8","slot9","slot10"].map(s => interaction.options.getString(s)).filter(Boolean);
       const shopItems = [];
       const skins = await fetchFortniteSkins();
       const bundles = await getAllBundles();
@@ -1661,12 +1296,12 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
           if (skin) shopItems.push({ skinId: skin.id, name: skin.name, rarity: skin.rarity, imageUrl: skin.imageUrl, price: SKIN_PRICE });
         }
       }
-      if (shopItems.length < 5) {
-        const fill = await getRandomShopSkins(5 - shopItems.length);
+      if (shopItems.length < 10) {
+        const fill = await getRandomShopSkins(10 - shopItems.length);
         for (const s of fill) shopItems.push({ skinId: s.id, name: s.name, rarity: s.rarity, imageUrl: s.imageUrl, price: SKIN_PRICE });
       }
-      setItemShop(shopItems.slice(0, 5));
-      const lines = shopItems.slice(0, 5).map(s => `${s.isBundle ? "📦" : getRarityEmoji(s.rarity)} **${s.name}** — ${s.price.toLocaleString()} V-Bucks`);
+      setItemShop(shopItems.slice(0, 10));
+      const lines = shopItems.slice(0, 10).map(s => `${s.isBundle ? "📦" : getRarityEmoji(s.rarity)} **${s.name}** — ${s.price.toLocaleString()} V-Bucks`);
       await interaction.editReply({ embeds: [new EmbedBuilder().setTitle("✅ Item Shop Updated!").setDescription(`The shop now features:\n\n${lines.join("\n")}`).setColor(0x00d4ff).setTimestamp()] });
     },
   },
@@ -1691,58 +1326,105 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
   },
 
   {
-    data: new SlashCommandBuilder().setName("itemshop").setDescription("Browse today's Item Shop"),
+    data: new SlashCommandBuilder().setName("itemshop").setDescription("Browse and buy from today's Item Shop"),
     async execute(interaction) {
       await interaction.deferReply();
       const userId = interaction.user.id;
       resetQuestsIfNeeded(userId); addInteraction(userId); progressQuest(userId, "check_shop");
+      if (isEliminated(userId)) { const m = Math.ceil(getEliminationTimeLeft(userId)/60000); await interaction.editReply({ content: `☠️ Eliminated for **${m} min**. Ask someone to \`/reboot\` you.` }); return; }
       const skins = await ensureShopFresh();
       let page = 0;
+
+      function calcPrice(item, user) {
+        const isBundle = !!item.isBundle;
+        if (!isBundle && hasActiveFreeSkin(userId)) return 0;
+        if (isBundle) {
+          const equipped = user.equippedSkins ?? [];
+          const bIds = (item.bundleSkins ?? []).map(s => s.id);
+          const matches = equipped.filter(id => bIds.some(bid => id.startsWith(bid))).length;
+          let disc = Math.min(matches, 2) * 0.35;
+          return Math.floor(item.price * (1 - disc));
+        }
+        let disc = user.creatorDiscount ?? 0;
+        const adminDisc = activeDiscounts.get(item.skinId);
+        if (adminDisc && adminDisc.expiresAt > Date.now()) disc = Math.max(disc, adminDisc.percent / 100);
+        return Math.floor(item.price * (1 - disc));
+      }
+
       const buildPage = (p) => {
         const item = skins[p], user = getUser(userId);
         const isBundle = !!item.isBundle;
-        const discount = isBundle ? 0 : (user.creatorDiscount ?? 0);
-        const finalPrice = isBundle ? item.price : Math.floor(item.price * (1 - discount));
+        const isFree = !isBundle && hasActiveFreeSkin(userId);
+        const isHacked = !!user.hackedFreeShop;
+        const fp = calcPrice(item, user);
+        const adminDisc = !isBundle && activeDiscounts.get(item.skinId);
+        const adminDiscActive = adminDisc && adminDisc.expiresAt > Date.now();
+        const equipped = user.equippedSkins ?? [];
+        const bIds = isBundle ? (item.bundleSkins ?? []).map(s => s.id) : [];
+        const bundleMatches = isBundle ? equipped.filter(id => bIds.some(bid => id.startsWith(bid))).length : 0;
+        const bundleDiscLine = isBundle && bundleMatches > 0 ? `\n🎽 **Bundle discount:** ${Math.min(bundleMatches,2)*35}% off (${bundleMatches} matching skin${bundleMatches>1?"s":""} equipped!)` : "";
+        const bonusLine = item.bonusVbucks ? `\n💎 **BONUS: +${item.bonusVbucks} V-Bucks with purchase!**` : "";
+        const hackedLine = isHacked ? `\n\n🔴 **[HACKED]** Use the 🔴 button to claim the **entire shop FREE!**` : "";
         const desc = isBundle
-          ? `📦 **${item.name}** *(Bundle)*\n\n**Includes:**\n${(item.bundleSkins ?? []).map(s => `• **${s.name}**`).join("\n")}\n\n💰 **Price: ${finalPrice.toLocaleString()} V-Bucks**\n\n🔄 Shop resets in **${getTimeUntilReset()}**`
-          : `${getRarityEmoji(item.rarity)} **${item.name}**\n✨ Rarity: **${item.rarity}**\n\n💰 **Price: ${finalPrice.toLocaleString()} V-Bucks**${user.hasCreatorCode && !isBundle ? ` 🏷️ *(${Math.round(discount*100)}% off)*` : ""}\n\n🔄 Shop resets in **${getTimeUntilReset()}**`;
-        const embed = new EmbedBuilder().setTitle(`🛒 Item Shop — ${isBundle ? "📦 Bundle" : "Skin"} ${p+1} of ${skins.length}`).setDescription(desc).setColor(getRarityColor(item.rarity)).setFooter({ text: "Use /creatorcode for a discount!" }).setTimestamp();
+          ? `📦 **${item.name}** *(Bundle)*\n\n**Includes:**\n${(item.bundleSkins ?? []).map(s => `• **${s.name}**`).join("\n")}${bundleDiscLine}${bonusLine}\n\n💰 **Price: ${fp.toLocaleString()} V-Bucks**\n\n🔄 Shop resets in **${getTimeUntilReset()}**${hackedLine}`
+          : `${getRarityEmoji(item.rarity)} **${item.name}**\n✨ Rarity: **${item.rarity}**${bonusLine}\n\n💰 **Price: ${isFree ? "FREE 🎁" : `${fp.toLocaleString()} V-Bucks`}**${user.hasCreatorCode && !isBundle ? ` 🏷️ *(${Math.round((user.creatorDiscount??0)*100)}% off)*` : ""}${adminDiscActive ? ` 🏷️ *(Admin: ${adminDisc.percent}% off!)*` : ""}\n\n🔄 Shop resets in **${getTimeUntilReset()}**${hackedLine}`;
+        const embed = new EmbedBuilder()
+          .setTitle(`🛒 Item Shop — ${isBundle ? "📦 Bundle" : "Skin"} ${p+1} of ${skins.length}${isHacked ? " 🔴 HACKED" : ""}`)
+          .setDescription(desc).setColor(isHacked ? 0xff0000 : getRarityColor(item.rarity))
+          .setFooter({ text: "Use /creatorcode for a discount!" }).setTimestamp();
         if (item.imageUrl) embed.setImage(item.imageUrl);
-        const row = new ActionRowBuilder().addComponents(
+        const components = [
           new ButtonBuilder().setCustomId(`shop_prev_${p}`).setLabel("◀ Prev").setStyle(ButtonStyle.Secondary).setDisabled(p === 0),
-          new ButtonBuilder().setCustomId(`shop_buy_${p}`).setLabel(`Buy — ${finalPrice.toLocaleString()} V-Bucks`).setStyle(ButtonStyle.Success),
-          new ButtonBuilder().setCustomId(`shop_next_${p}`).setLabel("Next ▶").setStyle(ButtonStyle.Secondary).setDisabled(p >= skins.length - 1)
-        );
-        return { embed, row, finalPrice };
+          new ButtonBuilder().setCustomId(`shop_buy_${p}`).setLabel(isFree ? "Claim FREE 🎁" : `Buy — ${fp.toLocaleString()} V-Bucks`).setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId(`shop_next_${p}`).setLabel("Next ▶").setStyle(ButtonStyle.Secondary).setDisabled(p >= skins.length - 1),
+        ];
+        if (isHacked) components.push(new ButtonBuilder().setCustomId(`shop_hackall_${p}`).setLabel("🔴 Claim Entire Shop FREE").setStyle(ButtonStyle.Danger));
+        const row = new ActionRowBuilder().addComponents(components);
+        return { embed, row, fp };
       };
       const { embed, row } = buildPage(0);
       const msg = await interaction.editReply({ embeds: [embed], components: [row] });
       const collector = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 5*60*1000, filter: (b) => b.user.id === userId });
       collector.on("collect", async (btn) => {
-        if (btn.customId.startsWith("shop_prev")) { page = Math.max(0, page-1); const { embed: e, row: r } = buildPage(page); await btn.update({ embeds: [e], components: [r] }); }
-        else if (btn.customId.startsWith("shop_next")) { page = Math.min(skins.length-1, page+1); const { embed: e, row: r } = buildPage(page); await btn.update({ embeds: [e], components: [r] }); }
-        else if (btn.customId.startsWith("shop_buy")) {
+        if (btn.customId.startsWith("shop_prev")) { page = Math.max(0, page-1); const { embed: e, row: r } = buildPage(page); await btn.update({ embeds: [e], components: [r] }); return; }
+        if (btn.customId.startsWith("shop_next")) { page = Math.min(skins.length-1, page+1); const { embed: e, row: r } = buildPage(page); await btn.update({ embeds: [e], components: [r] }); return; }
+        if (btn.customId.startsWith("shop_hackall")) {
+          const freshUser = getUser(userId);
+          if (!freshUser.hackedFreeShop) { await btn.reply({ content: "🔒 You haven't been hacked — this option isn't available.", ephemeral: true }); return; }
+          let itemsGiven = [];
+          for (const s of skins) {
+            if (s.isBundle) { for (const sk of (s.bundleSkins ?? [])) addSkinToInventory(userId, sk.id + "_hack_" + Date.now(), sk.name); itemsGiven.push(`📦 ${s.name}`); }
+            else if (!freshUser.inventory.includes(s.skinId)) { addSkinToInventory(userId, s.skinId, s.name); itemsGiven.push(`${getRarityEmoji(s.rarity)} ${s.name}`); }
+          }
+          updateUser(userId, { hackedFreeShop: false });
+          await btn.update({ embeds: [new EmbedBuilder().setTitle("🔴 Hacked Shop Claimed!").setDescription(`You got the **entire Item Shop for FREE!**\n\n${itemsGiven.slice(0,15).join("\n")}${itemsGiven.length>15?`\n*...and ${itemsGiven.length-15} more*`:""}\n\n*Your free shop run is used up.*`).setColor(0xff0000).setTimestamp()], components: [] });
+          collector.stop(); return;
+        }
+        if (btn.customId.startsWith("shop_buy")) {
           const item = skins[page], freshUser = getUser(userId);
           const isBundle = !!item.isBundle;
-          const fp = isBundle ? item.price : Math.floor(item.price * (1 - (freshUser.creatorDiscount ?? 0)));
-          if (!freshUser.infiniteVbucks && freshUser.vbucks < fp) {
+          const freshFree = !isBundle && hasActiveFreeSkin(userId);
+          const fp = calcPrice(item, freshUser);
+          if (!freshFree && !freshUser.infiniteVbucks && freshUser.vbucks < fp) {
             if (!freshUser.brokeAttempt) { updateUser(userId, { brokeAttempt: true }); const ach = awardAchievement(userId, "broke"); await btn.reply({ content: `❌ Need **${fp.toLocaleString()} V-Bucks** but only have **${freshUser.vbucks.toLocaleString()}**.`, embeds: ach ? [buildAchievementEmbed(ach)] : [], ephemeral: true }); }
             else await btn.reply({ content: `❌ Not enough V-Bucks!`, ephemeral: true });
             return;
           }
           if (!isBundle && freshUser.inventory.includes(item.skinId)) { await btn.reply({ content: `⚠️ Already own **${item.name}**!`, ephemeral: true }); return; }
-          if (!freshUser.infiniteVbucks) addVbucks(userId, -fp);
+          if (fp > 0 && !freshUser.infiniteVbucks) addVbucks(userId, -fp);
+          if (item.bonusVbucks) addVbucks(userId, item.bonusVbucks);
           if (isBundle) {
             for (const s of (item.bundleSkins ?? [])) addSkinToInventory(userId, s.id + "_shop_" + Date.now(), s.name);
           } else {
             addSkinToInventory(userId, item.skinId, item.name);
           }
-          updateUser(userId, { shopPurchases: (freshUser.shopPurchases ?? 0) + 1, shopSkins: [...(freshUser.shopSkins ?? []), item.skinId], shopSkinPrices: { ...(freshUser.shopSkinPrices ?? {}), [item.skinId]: fp } });
+          updateUser(userId, { shopPurchases: (freshUser.shopPurchases ?? 0) + 1, shopSkins: [...(freshUser.shopSkins ?? []), item.skinId], shopSkinPrices: { ...(freshUser.shopSkinPrices ?? {}), [item.skinId]: fp }, ...(freshFree ? { freeSkinRedeemed: true } : {}) });
           checkAndAwardAchievements(userId);
           const updated = getUser(userId);
+          const bonusLine = item.bonusVbucks ? `\n💎 **Bonus:** +${item.bonusVbucks} V-Bucks included!` : "";
           const purchaseDesc = isBundle
-            ? `📦 You bought the **${item.name}** bundle!\n\n**All skins added to your locker!**\n💰 Spent: ${fp.toLocaleString()} V-Bucks\n💳 Remaining: ${updated.infiniteVbucks ? "∞" : updated.vbucks.toLocaleString()} V-Bucks`
-            : `${getRarityEmoji(item.rarity)} You bought **${item.name}**!\n💰 Spent: ${fp.toLocaleString()} V-Bucks\n💳 Remaining: ${updated.infiniteVbucks ? "∞" : updated.vbucks.toLocaleString()} V-Bucks`;
+            ? `📦 You bought the **${item.name}** bundle!\n\n**All skins added to your locker!**${bonusLine}\n💰 Spent: ${fp.toLocaleString()} V-Bucks\n💳 Remaining: ${updated.infiniteVbucks ? "∞" : updated.vbucks.toLocaleString()} V-Bucks`
+            : `${getRarityEmoji(item.rarity)} You bought **${item.name}**!${freshFree ? " *(FREE — creator code perk!)*" : ""}${bonusLine}\n💰 Spent: ${freshFree ? "0" : fp.toLocaleString()} V-Bucks\n💳 Remaining: ${updated.infiniteVbucks ? "∞" : updated.vbucks.toLocaleString()} V-Bucks`;
           await btn.reply({ embeds: [new EmbedBuilder().setTitle("✅ Purchase Successful!").setDescription(purchaseDesc).setColor(getRarityColor(item.rarity)).setTimestamp()], ephemeral: true });
         }
       });
@@ -1750,123 +1432,6 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
     },
   },
 
-  {
-    data: new SlashCommandBuilder().setName("buy").setDescription("Purchase a skin or bundle from the current Item Shop"),
-    async execute(interaction) {
-      await interaction.deferReply();
-      const userId = interaction.user.id;
-      resetQuestsIfNeeded(userId); addInteraction(userId);
-      if (isEliminated(userId)) { const m = Math.ceil(getEliminationTimeLeft(userId)/60000); await interaction.editReply({ content: `☠️ Eliminated for **${m} min**. Ask someone to \`/reboot\` you.` }); return; }
-      const skins = await ensureShopFresh(), user = getUser(userId);
-      const isFree = hasActiveFreeSkin(userId);
-      const isHacked = !!user.hackedFreeShop;
-
-      function getBundleDiscount(bundleSkins) {
-        const equipped = user.equippedSkins ?? [];
-        const bundleSkinIds = (bundleSkins ?? []).map(s => s.id);
-        const matches = equipped.filter(id => bundleSkinIds.some(bid => id.startsWith(bid))).length;
-        return Math.min(matches, 2) * 0.35;
-      }
-
-      const skinOptions = skins.map((s, i) => {
-        const isBundle = !!s.isBundle;
-        let fp;
-        if (isFree && !isBundle) {
-          fp = 0;
-        } else if (isBundle) {
-          const disc = getBundleDiscount(s.bundleSkins);
-          fp = Math.floor(s.price * (1 - disc));
-        } else {
-          fp = Math.floor(s.price * (1 - (user.creatorDiscount ?? 0)));
-        }
-        const discInfo = isBundle && getBundleDiscount(s.bundleSkins) > 0 ? ` 🎽 ${Math.round(getBundleDiscount(s.bundleSkins)*100)}% off!` : "";
-        const label = isBundle ? `📦 ${s.name} — ${fp.toLocaleString()} V-Bucks${discInfo}` : (isFree ? `${s.name} — FREE 🎁` : `${s.name} — ${fp.toLocaleString()} V-Bucks`);
-        return new StringSelectMenuOptionBuilder().setLabel(label.slice(0, 100)).setDescription((isBundle ? `Bundle: ${(s.bundleSkins??[]).length} skins` : `${getRarityEmoji(s.rarity)} ${s.rarity}`).slice(0, 100)).setValue(String(i));
-      });
-
-      const entireShopOption = new StringSelectMenuOptionBuilder()
-        .setLabel(isHacked ? "🔴 GET ENTIRE SHOP FREE [HACKED]" : "🔒 GET ENTIRE SHOP FREE [Locked]")
-        .setDescription(isHacked ? "Claim every item in the shop for FREE — once only!" : "You haven't been hacked. Only the hacked get this.")
-        .setValue("entire_shop");
-
-      const allOptions = [entireShopOption, ...skinOptions].slice(0, 25);
-      const row = new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder().setCustomId("buy_select").setPlaceholder("Choose a skin or bundle...").addOptions(allOptions)
-      );
-
-      const titleStr = isHacked ? "🔴 HACKED — Buy or Claim Entire Shop FREE" : isFree ? "🎁 Free Skin! Pick Yours" : "🛒 Buy a Skin or Bundle";
-      const descStr = isHacked
-        ? `⚡ You've been hacked! Select **🔴 GET ENTIRE SHOP FREE** to claim everything at once, or buy individual items.\n\n💳 Balance: **${user.infiniteVbucks ? "∞" : user.vbucks.toLocaleString()} V-Bucks**`
-        : isFree ? "Free skin from Tylajadee creator code!" : `Balance: **${user.vbucks.toLocaleString()} V-Bucks**\n\nSelect an item:`;
-
-      const msg = await interaction.editReply({ embeds: [new EmbedBuilder().setTitle(titleStr).setDescription(descStr).setColor(isHacked ? 0xff0000 : isFree ? 0xffd700 : 0x00d4ff).setTimestamp()], components: [row] });
-      const collector = msg.createMessageComponentCollector({ componentType: ComponentType.StringSelect, time: 60000, filter: (i) => i.user.id === userId });
-
-      collector.on("collect", async (sel) => {
-        const val = sel.values[0];
-        const freshUser = getUser(userId);
-
-        if (val === "entire_shop") {
-          if (!freshUser.hackedFreeShop) {
-            await sel.update({ content: "🔒 You haven't been hacked — this option isn't available to you.", embeds: [], components: [] });
-            return;
-          }
-          let itemsGiven = [];
-          for (const s of skins) {
-            if (s.isBundle) {
-              for (const sk of (s.bundleSkins ?? [])) addSkinToInventory(userId, sk.id + "_hack_" + Date.now(), sk.name);
-              itemsGiven.push(`📦 ${s.name}`);
-            } else {
-              if (!freshUser.inventory.includes(s.skinId)) {
-                addSkinToInventory(userId, s.skinId, s.name);
-                itemsGiven.push(`${getRarityEmoji(s.rarity)} ${s.name}`);
-              }
-            }
-          }
-          updateUser(userId, { hackedFreeShop: false });
-          await sel.update({ embeds: [new EmbedBuilder()
-            .setTitle("🔴 Hacked Shop Claimed!")
-            .setDescription(`You got the **entire Item Shop for FREE!**\n\n${itemsGiven.slice(0,15).join("\n")}${itemsGiven.length > 15 ? `\n*...and ${itemsGiven.length-15} more*` : ""}\n\n*Your free shop run is used up. Buy items normally from now on.*`)
-            .setColor(0xff0000).setTimestamp()], components: [] });
-          collector.stop();
-          return;
-        }
-
-        const item = skins[parseInt(val)];
-        if (!item) { await sel.update({ content: "❌ Invalid selection.", embeds: [], components: [] }); return; }
-        const isBundle = !!item.isBundle;
-        const freshFree = !isBundle && hasActiveFreeSkin(userId);
-        let fp;
-        if (freshFree) {
-          fp = 0;
-        } else if (isBundle) {
-          const equipped2 = freshUser.equippedSkins ?? [];
-          const bIds = (item.bundleSkins ?? []).map(s => s.id);
-          const matches2 = equipped2.filter(id => bIds.some(bid => id.startsWith(bid))).length;
-          fp = Math.floor(item.price * (1 - Math.min(matches2, 2) * 0.35));
-        } else {
-          fp = Math.floor(item.price * (1 - (freshUser.creatorDiscount ?? 0)));
-        }
-        if (!freshFree && !freshUser.infiniteVbucks && freshUser.vbucks < fp) { await sel.update({ content: `❌ Need **${fp.toLocaleString()} V-Bucks**.`, embeds: [], components: [] }); return; }
-        if (!isBundle && freshUser.inventory.includes(item.skinId)) { await sel.update({ content: `⚠️ Already own **${item.name}**!`, embeds: [], components: [] }); return; }
-        if (fp > 0 && !freshUser.infiniteVbucks) addVbucks(userId, -fp);
-        if (isBundle) {
-          for (const s of (item.bundleSkins ?? [])) addSkinToInventory(userId, s.id + "_shop_" + Date.now(), s.name);
-        } else {
-          addSkinToInventory(userId, item.skinId, item.name);
-        }
-        updateUser(userId, { shopPurchases: (freshUser.shopPurchases ?? 0) + 1, shopSkins: [...(freshUser.shopSkins ?? []), item.skinId], shopSkinPrices: { ...(freshUser.shopSkinPrices ?? {}), [item.skinId]: fp }, ...(freshFree ? { freeSkinRedeemed: true } : {}) });
-        checkAndAwardAchievements(userId);
-        const updated = getUser(userId);
-        const purchaseDesc = isBundle
-          ? `📦 You bought the **${item.name}** bundle!\n\n**All skins added to your locker!**\n💰 Spent: ${fp.toLocaleString()} V-Bucks\n💳 Remaining: ${updated.infiniteVbucks ? "∞" : updated.vbucks.toLocaleString()} V-Bucks`
-          : `${getRarityEmoji(item.rarity)} You bought **${item.name}**!\n\n💰 **Spent:** ${fp.toLocaleString()} V-Bucks\n💳 **Remaining:** ${updated.infiniteVbucks ? "∞" : updated.vbucks.toLocaleString()} V-Bucks`;
-        await sel.update({ embeds: [new EmbedBuilder().setTitle("✅ Purchase Successful!").setDescription(purchaseDesc).setColor(getRarityColor(item.rarity)).setTimestamp()], components: [] });
-        collector.stop();
-      });
-      collector.on("end", (_, r) => { if (r === "time") interaction.editReply({ content: "⏰ Timed out.", embeds: [], components: [] }).catch(() => {}); });
-    },
-  },
 
   {
     data: new SlashCommandBuilder()
@@ -2206,7 +1771,7 @@ Creator Receives: **${creatorGets.toLocaleString()} coins**`
         await interaction.reply({ embeds: [new EmbedBuilder().setTitle("❌ Creator Code Removed").setColor(0xff6600).setTimestamp()] }); return;
       }
       const code = rawInput.toLowerCase().trim(), match = VALID_CODES[code];
-      if (!match) { await interaction.reply({ embeds: [new EmbedBuilder().setTitle("❓ Unknown Creator Code").setDescription(`**${rawInput}** isn't valid. Try \`tylajadee\`, \`ultravioletkaty\`, or \`clovel\`!`).setColor(0xff6600).setTimestamp()] }); return; }
+      if (!match) { await interaction.reply({ embeds: [new EmbedBuilder().setTitle("❓ Unknown Creator Code").setDescription(`**${rawInput}** isn't valid. Try \`tylajadee\`, \`ultravioletkaty\`, \`clovel\`, or \`beccal0uise\`!`).setColor(0xff6600).setTimestamp()] }); return; }
       const user = getUser(userId), discountPct = Math.round(match.discount * 100);
       const updates = { hasCreatorCode: true, creatorDiscount: match.discount };
       if (match.freeSkin && !((user.freeSkinExpiry??0) > Date.now() && !(user.freeSkinRedeemed??false))) { updates.freeSkinExpiry = Date.now() + 7*24*60*60*1000; updates.freeSkinRedeemed = false; }
@@ -3280,6 +2845,42 @@ Select how many V-Bucks you'd like to purchase:`).setColor(0x00d4ff).setTimestam
         .setTimestamp()] });
     },
   },
+
+  {
+    data: new SlashCommandBuilder()
+      .setName("discount")
+      .setDescription("Apply a timed discount to an Item Shop item (expires in 30 minutes)")
+      .addStringOption(o => o.setName("item").setDescription("Item name to discount").setRequired(true).setAutocomplete(true))
+      .addIntegerOption(o => o.setName("percent").setDescription("Discount percentage (1–100)").setRequired(true).setMinValue(1).setMaxValue(100))
+      .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+    autocomplete: async (interaction) => {
+      const focused = interaction.options.getFocused().toLowerCase();
+      const shop = getItemShop();
+      const choices = (shop.skins ?? []).filter(s => s.name.toLowerCase().includes(focused)).map(s => ({ name: s.name, value: s.skinId }));
+      await interaction.respond(choices.slice(0, 25));
+    },
+    async execute(interaction) {
+      await interaction.deferReply({ ephemeral: true });
+      const itemId = interaction.options.getString("item", true);
+      const percent = interaction.options.getInteger("percent", true);
+      const shop = getItemShop();
+      const item = (shop.skins ?? []).find(s => s.skinId === itemId || s.name.toLowerCase() === itemId.toLowerCase());
+      if (!item) {
+        await interaction.editReply({ content: "❌ That item isn't in the current shop. Use `/resetshop` or `/release` to refresh the shop first." });
+        return;
+      }
+      const expiresAt = Date.now() + 30 * 60 * 1000;
+      activeDiscounts.set(item.skinId, { percent, expiresAt, displayName: item.name });
+      setTimeout(() => {
+        const d = activeDiscounts.get(item.skinId);
+        if (d && d.expiresAt === expiresAt) activeDiscounts.delete(item.skinId);
+      }, 30 * 60 * 1000);
+      await interaction.editReply({ embeds: [new EmbedBuilder()
+        .setTitle("🏷️ Shop Discount Applied!")
+        .setDescription(`**${item.name}** is now **${percent}% off** in the Item Shop!\n\n⏰ Discount expires in **30 minutes**.\n\n*Visible to all players in \`/itemshop\`.*`)
+        .setColor(0x00d4ff).setTimestamp()] });
+    },
+  },
 ];
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
@@ -3361,157 +2962,3 @@ client.login(_loginToken);
 
 
 
-const LIVE_GIFTS = {
-  tiktokstars: { name: "TikTok Stars", coins: 39999, emoji: "⭐" },
-  universe: { name: "TikTok Universe", coins: 44999, emoji: "🌌" },
-  lion: { name: "Lion", coins: 29999, emoji: "🦁" },
-  pegasus: { name: "Pegasus", coins: 42999, emoji: "🪽" },
-  firephoenix: { name: "Fire Phoenix", coins: 41999, emoji: "🔥" },
-  thunderfalcon: { name: "Thunder Falcon", coins: 39999, emoji: "🦅" },
-  flyingjets: { name: "Flying Jets", coins: 5000, emoji: "✈️" },
-  leonkitten: { name: "Leon The Kitten", coins: 4888, emoji: "🐱" },
-  galaxy: { name: "Galaxy", coins: 1000, emoji: "🌠" },
-  motorcycle: { name: "Motorcycle", coins: 2988, emoji: "🏍️" },
-  train: { name: "Train", coins: 899, emoji: "🚂" },
-  partyonon: { name: "Party On&On", coins: 15000, emoji: "🎉" },
-  privatejet: { name: "Private Jet", coins: 4888, emoji: "🛩️" }
-};
-
-
-
-
-client.on("interactionCreate", async interaction => {
-
-  if (!interaction.isButton()) return;
-
-  if (!interaction.customId.startsWith("openchest_")) return;
-
-  const chestId = interaction.customId.replace("openchest_", "");
-
-  const chest = treasureChests.get(chestId);
-
-  if (!chest) {
-    return interaction.reply({
-      content: "❌ This chest expired.",
-      ephemeral: true
-    });
-  }
-
-  if (Date.now() < chest.unlockTime) {
-    const remaining = Math.ceil(
-      (chest.unlockTime - Date.now()) / 1000
-    );
-
-    return interaction.reply({
-      content: `⏳ Unlocks in ${remaining}s`,
-      ephemeral: true
-    });
-  }
-
-  if (chest.claimed.includes(interaction.user.id)) {
-    return interaction.reply({
-      content: "❌ You already opened this chest.",
-      ephemeral: true
-    });
-  }
-
-  if (chest.claimed.length >= chest.maxPeople) {
-    return interaction.reply({
-      content: "❌ The chest is empty.",
-      ephemeral: true
-    });
-  }
-
-  chest.claimed.push(interaction.user.id);
-
-  if (Math.random() <= 0.02) {
-    return interaction.reply({
-      content: "📦 The chest was empty...",
-      ephemeral: true
-    });
-  }
-
-  let reward = Math.floor(
-    chest.remaining /
-    (chest.maxPeople - chest.claimed.length + 1)
-  );
-
-  if (Math.random() <= 0.005) {
-    reward = chest.remaining;
-  }
-
-  chest.remaining -= reward;
-
-  addCoins(interaction.user.id, reward);
-
-  return interaction.reply({
-    content: `🪙 You got ${reward.toLocaleString()} coins!`,
-    ephemeral: true
-  });
-});
-
-
-commands.push({
-  data: new SlashCommandBuilder()
-    .setName("treasurechest")
-    .setDescription("Create a treasure chest")
-    .addIntegerOption(option =>
-      option
-        .setName("coins")
-        .setDescription("Total coins")
-        .setRequired(true)
-    )
-    .addIntegerOption(option =>
-      option
-        .setName("people")
-        .setDescription("How many can open")
-        .setRequired(true)
-    )
-    .addIntegerOption(option =>
-      option
-        .setName("seconds")
-        .setDescription("Unlock time")
-        .setRequired(true)
-    ),
-
-  async execute(interaction) {
-
-    const coins = interaction.options.getInteger("coins");
-    const people = interaction.options.getInteger("people");
-    const seconds = interaction.options.getInteger("seconds");
-
-    const chestId = `${Date.now()}_${interaction.user.id}`;
-
-    treasureChests.set(chestId, {
-      remaining: coins,
-      maxPeople: people,
-      claimed: [],
-      unlockTime: Date.now() + (seconds * 1000)
-    });
-
-    const embed = new EmbedBuilder()
-      .setTitle("🪙 Treasure Chest")
-      .setDescription(
-        `Coins: **${coins.toLocaleString()}**\n` +
-        `Openers: **0/${people}**\n` +
-        `Unlocks: <t:${Math.floor((Date.now() + seconds * 1000)/1000)}:R>`
-      )
-      .setThumbnail(
-        "https://cdn.discordapp.com/attachments/1247303459359690805/1505279164289388544/Fx_CoinChest.webp"
-      )
-      .setColor(0xffd700);
-
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`openchest_${chestId}`)
-        .setLabel("🪙 Open Chest")
-        .setStyle(ButtonStyle.Success)
-    );
-
-    await interaction.reply({
-      embeds: [embed],
-      components: [row]
-    });
-  }
-});
-commandMap.set("treasurechest", commands[commands.length - 1]);
