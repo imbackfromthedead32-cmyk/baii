@@ -636,7 +636,9 @@ const CUSTOM_SKINS = [
   { id:"custom_impact_mil_stream",   name:"Impact Becca",  description:"Six seven!",          rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1511491351605153854/file_0000000057a071f49938b5ee27633bd4-removebg-preview.png?ex=6a20a584&is=6a1f5404&hm=f28eff22fe7fa4a161c3219fff9bb4af7406dc326c222c6c7d5b5c0bb58e4167&", isStw:false, isCustom:true },
   { id:"custom_impact_mil_becca",   name:"Becca",  description:"Your fav barbie streamer!",          rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1511491351923916880/file_000000002d0c71f4a92b8162a4f26bd6-removebg-preview.png?ex=6a20a584&is=6a1f5404&hm=df6558eb9af734df8016b828d73a5a48f25db5bc5afb6a31507c1e53c598d79f&", isStw:false, isCustom:true },
   { id:"custom_impact_mil_beccca",   name:"Becca Wardolf",  description:"Burn it.",          rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1511497944556241047/file_0000000081b472468e6f04f45f8401ba-removebg-preview.png?ex=6a20aba8&is=6a1f5a28&hm=5ba3912d7c1f1ccf91831a465fd26d862381c7a71a0b9a9d0e4ea75deef50692&", isStw:false, isCustom:true },
-  
+  { id:"custom_impact_mil_katy",   name:"Katy",  description:"Blackpink in your area.",          rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1511744080328130660/file_0000000095a8720aa6a2d49ca11095d5-removebg-preview.png?ex=6a2190e3&is=6a203f63&hm=a74c17c19c889978f9b554e9b228da26811eca912de0aec4bbf457bfc401708f&", isStw:false, isCustom:true },
+  { id:"custom_impact_mil_katyy",   name:"Impact Katy",  description:"Impact forever.",          rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1511744080634187997/file_000000002e2c7246a26a64c3fcd4cbc1-removebg-preview.png?ex=6a2190e3&is=6a203f63&hm=f7837d5c36c5cfff84dfc2ddddd20c9892825f2c271a5c57f19efe3302e3c2ff&", isStw:false, isCustom:true },
+  { id:"custom_impact_mil_katyyy",   name:"Draculara",  description:"Daylight makes me feel like Dracula.",          rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1511744080931979294/file_0000000028a07246bc74b4adb6bbc7a0-removebg-preview.png?ex=6a2190e3&is=6a203f63&hm=b8a18e6a29336b7da99fd735bd3a016d177e76d60d590248abe9bce944971fd4&", isStw:false, isCustom:true },
 ];
 const STATIC_BUNDLES = [
   {
@@ -652,14 +654,8 @@ const STATIC_BUNDLES = [
       { id: "custom_sophia",   name: "Sophia"   },
       { id: "custom_lara",     name: "Lara"     },
       { id: "custom_daniela",  name: "Daniela"  },
-      { id: "custom_yoonchae", name: "Yoonchae" },
-    ],
-  },
-  {
-    id: "bundle_pinkyup",
-    name: "PINKY UP Bundle",
-    rarity: "Icon",
-    imageUrl: "https://cdn.discordapp.com/attachments/1504485556325715980/1504534511327772682/channels4_profile.jpg?ex=6a07ff34&is=6a06adb4&hm=ad77502395150f5fb7851507d58beff19a56bc3c357ff08fe881ae56c60132ed&",
+      { id: "custom_y
+        mageUrl: "https://cdn.discordapp.com/attachments/1504485556325715980/1504534511327772682/channels4_profile.jpg?ex=6a07ff34&is=6a06adb4&hm=ad77502395150f5fb7851507d58beff19a56bc3c357ff08fe881ae56c60132ed&",
     price: BUNDLE_PRICE,
     isBundle: true,
     skins: [
