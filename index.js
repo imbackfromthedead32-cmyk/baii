@@ -690,6 +690,19 @@ const STATIC_BUNDLES = [
     ],
   },
   {
+    id: "bundle_ultraviolet",
+    name: "Ultraviolet Bundle",
+    rarity: "Icon",
+    imageUrl: "https://cdn.discordapp.com/attachments/1244713742281871380/1511744080634187997/file_000000002e2c7246a26a64c3fcd4cbc1-removebg-preview.png?ex=6a2190e3&is=6a203f63&hm=f7837d5c36c5cfff84dfc2ddddd20c9892825f2c271a5c57f19efe3302e3c2ff&",
+    price: BUNDLE_PRICE,
+    isBundle: true,
+    skins: [
+      { id: "custom_impact_mil_katy",   name: "Katy"        },
+      { id: "custom_impact_mil_katyy",  name: "Impact Katy" },
+      { id: "custom_impact_mil_katyyy", name: "Draculara"   },
+    ],
+  },
+  {
     id: "bundle_forever_duo",
     name: "Forever Duo Bundle",
     rarity: "Icon",
