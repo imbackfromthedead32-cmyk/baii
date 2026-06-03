@@ -654,8 +654,14 @@ const STATIC_BUNDLES = [
       { id: "custom_sophia",   name: "Sophia"   },
       { id: "custom_lara",     name: "Lara"     },
       { id: "custom_daniela",  name: "Daniela"  },
-      { id: "custom_y
-        mageUrl: "https://cdn.discordapp.com/attachments/1504485556325715980/1504534511327772682/channels4_profile.jpg?ex=6a07ff34&is=6a06adb4&hm=ad77502395150f5fb7851507d58beff19a56bc3c357ff08fe881ae56c60132ed&",
+      { id: "custom_yoonchae", name: "Yoonchae" },
+    ],
+  },
+  {
+    id: "bundle_pinkyup",
+    name: "PINKY UP Bundle",
+    rarity: "Icon",
+    imageUrl: "https://cdn.discordapp.com/attachments/1504485556325715980/1504534511327772682/channels4_profile.jpg?ex=6a07ff34&is=6a06adb4&hm=ad77502395150f5fb7851507d58beff19a56bc3c357ff08fe881ae56c60132ed&",
     price: BUNDLE_PRICE,
     isBundle: true,
     skins: [
