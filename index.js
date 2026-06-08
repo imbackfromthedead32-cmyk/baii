@@ -27,6 +27,8 @@ let _db = {
   coinflipChallenges: {},
   crewCodes: {},
   pendingGifts: {},
+  bans: { serverBans: {}, globalBans: {}, tempBans: {} },
+  botAdmins: [],
 };
 
 let _saveTimer = null;
@@ -63,6 +65,8 @@ async function initDB() {
     if (stored.coinflipChallenges) _db.coinflipChallenges = stored.coinflipChallenges;
     if (stored.crewCodes)          _db.crewCodes          = stored.crewCodes;
     if (stored.pendingGifts)       _db.pendingGifts       = stored.pendingGifts;
+    if (stored.bans)               _db.bans               = stored.bans;
+    if (stored.botAdmins)          _db.botAdmins          = stored.botAdmins;
     console.log(`[data] Loaded ${Object.keys(_db.users).length} users from PostgreSQL`);
   } else {
     await _pool.query(
@@ -383,6 +387,66 @@ function setSpawnChannel(guildId, channelId) {
 function getAllGuildSpawnChannels() {
   return _db.spawnChannels || {};
 }
+function isBotAdmin(userId) {
+  return (_db.botAdmins || []).includes(userId);
+}
+function addBotAdmin(userId) {
+  if (!_db.botAdmins) _db.botAdmins = [];
+  if (!_db.botAdmins.includes(userId)) { _db.botAdmins.push(userId); save(); }
+}
+function ensureBans() {
+  if (!_db.bans) _db.bans = { serverBans: {}, globalBans: {}, tempBans: {} };
+  if (!_db.bans.serverBans) _db.bans.serverBans = {};
+  if (!_db.bans.globalBans) _db.bans.globalBans = {};
+  if (!_db.bans.tempBans)   _db.bans.tempBans   = {};
+}
+function getBanStatus(userId, guildId) {
+  ensureBans();
+  if (_db.bans.globalBans[userId]) return { banned: true, type: "global" };
+  const temp = _db.bans.tempBans[userId];
+  if (temp) {
+    if (Date.now() < temp.expiresAt) return { banned: true, type: "temp", expiresAt: temp.expiresAt };
+    delete _db.bans.tempBans[userId]; save();
+  }
+  if (guildId && (_db.bans.serverBans[guildId] || []).includes(userId)) return { banned: true, type: "server" };
+  return { banned: false };
+}
+function addServerBan(userId, guildId) {
+  ensureBans();
+  if (!_db.bans.serverBans[guildId]) _db.bans.serverBans[guildId] = [];
+  if (!_db.bans.serverBans[guildId].includes(userId)) { _db.bans.serverBans[guildId].push(userId); save(); }
+}
+function addHardBan(userId) {
+  ensureBans();
+  _db.bans.globalBans[userId] = true; save();
+}
+function addTempBan(userId, durationMs) {
+  ensureBans();
+  _db.bans.tempBans[userId] = { expiresAt: Date.now() + durationMs }; save();
+}
+function removeBan(userId, guildId) {
+  ensureBans();
+  delete _db.bans.globalBans[userId];
+  delete _db.bans.tempBans[userId];
+  if (guildId && _db.bans.serverBans[guildId]) {
+    _db.bans.serverBans[guildId] = _db.bans.serverBans[guildId].filter(id => id !== userId);
+  }
+  save();
+}
+function banReplyText(banStatus) {
+  if (banStatus.type === "global") return "You have been globally banned from this bot, even if you attempt to use this in another server you will still be banned.";
+  if (banStatus.type === "temp") {
+    const ms = banStatus.expiresAt - Date.now();
+    const totalMin = Math.ceil(ms / 60000);
+    const h = Math.floor(totalMin / 60), m = totalMin % 60;
+    const timeStr = h > 0 ? `${h}h ${m}m` : `${m}m`;
+    return `You have been temporarily suspended from using this bot for this long: **${timeStr}** To use the bot again, wait it out or try this bot in another server.`;
+  }
+  return "You have been server banned from using this bot, if you wanna use this bot again please invite this bot to a different server.";
+}
+function hasAdminAccess(interaction) {
+  return !!(interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) || isBotAdmin(interaction.user.id));
+}
 function setCoinflipChallenge(id, data) {
   _db.coinflipChallenges[id] = data;
   save();
@@ -522,6 +586,7 @@ const VALID_CODES = {
   ultravioletkaty:{ displayName: "ultravioletkaty", discount: 0.1 },
   clovel:         { displayName: "Clovel",          discount: 0.2 },
   beccal0uise:    { displayName: "beccal0uise",     discount: 0.1 },
+  qckdream:       { displayName: "qckdream",        discount: 0.1, giftSkin: { id: "wonkee", name: "Wonkee" } },
 };
 const DAILY_QUESTS = [
   { id: "catch_skins",    label: "Catch 3 spawned skins",            xpReward: 300, required: 3 },
@@ -617,101 +682,19 @@ const SKIN_BASE_URL = process.env.REPLIT_DEV_DOMAIN
   ? `https://${process.env.REPLIT_DEV_DOMAIN}/skins`
   : `http://localhost:${process.env.PORT || 3000}/skins`;
 
-const CUSTOM_SKINS = [
-  { id:"custom_megan",          name:"Megan",            description:"Your just a gameboy.",                              rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1504292223901110342/file_00000000c49071f48b40e4646744b881-removebg-preview.png?ex=6a0674ce&is=6a05234e&hm=60e3a93518d5635a4be2e9006043012f64b5e856ed6dd670b7201a221b72398f&", isStw:false, isCustom:true },
-  { id:"custom_manon",          name:"Manon",            description:"I go M.I.A!",                                       rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1504292224228130997/file_00000000b7c8720a84acd8f392c65c4d-removebg-preview.png?ex=6a0674ce&is=6a05234e&hm=4f3003d52790adc4770a4e5f2d8fb08bd75590ff0bdd669a78f432e11ee1ac83&", isStw:false, isCustom:true },
-  { id:"custom_lara",           name:"Lara",             description:"This aint a debut.",                                rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1504292224538644562/Screenshot_20260514_010522_CapCut-removebg-preview.png?ex=6a0674ce&is=6a05234e&hm=7cb6b539387ea9d62d54544de0f3ebf60b30e621ea9af98bb01c617e42582bae&", isStw:false, isCustom:true },
-  { id:"custom_daniela",        name:"Daniela",          description:"Gnarly.",                                           rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1504292224878514267/Screenshot_20260514_010604_CapCut-removebg-preview.png?ex=6a0674ce&is=6a05234e&hm=620dc4b71d4bb6948d11fd71729ce7c078da67542fd48853ce96333ac3f3fba3&", isStw:false, isCustom:true },
-  { id:"custom_yoonchae",       name:"Yoonchae",         description:"Party in the hollywood hills.",                     rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1504292225272774830/Screenshot_20260514_010636_CapCut-removebg-preview.png?ex=6a0674ce&is=6a05234e&hm=8b49a18f0456570b1197c2246b3b600651127079c954d845c15c54abd540caad&", isStw:false, isCustom:true },
-  { id:"custom_sophia",         name:"Sophia",           description:"If you get a call from Gabriela, hang up.",         rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1504292225599803432/Screenshot_20260514_010728_CapCut-removebg-preview.png?ex=6a0674ce&is=6a05234e&hm=99a0e39909fc7cd602faa95246ee5775fbebeb80f21e714cbed04225aafa9275&", isStw:false, isCustom:true },
-  { id:"custom_manon_pinkyup",    name:"Manon (PINKY UP)",    description:"It's 6. Not 5.",                               rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1504292225939542016/Screenshot_20260514_010847_CapCut-removebg-preview.png?ex=6a0674cf&is=6a05234f&hm=4d886652c5780a7a319d10f8394c9dc707b51332496efddcddd963b6cda80bf1&", isStw:false, isCustom:true },
-  { id:"custom_yoonchae_pinkyup", name:"Yoonchae (PINKY UP)", description:"The only true wisdom is knowing you know nothing.", rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1504292226367229992/Screenshot_20260514_011001_CapCut-removebg-preview.png?ex=6a0674cf&is=6a05234f&hm=40f216201f1345c8eb36958c817f54b7dd7a90b38988176c744fed9b1ac1eacb&", isStw:false, isCustom:true },
-  { id:"custom_sophia_pinkyup",   name:"Sophia (PINKY UP)",   description:"She's screaming from cloud nine.",             rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1504292226770014399/Screenshot_20260514_010921_CapCut-removebg-preview.png?ex=6a0674cf&is=6a05234f&hm=99a0e39909fc7cd602faa95246ee5775fbebeb80f21e714cbed04225aafa9275&", isStw:false, isCustom:true },
-  { id:"custom_lara_pinkyup",     name:"Lara (PINKY UP)",     description:"I bet it goes like this.",                     rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1504292227235447045/Screenshot_20260514_011053_CapCut-removebg-preview.png?ex=6a0674cf&is=6a05234f&hm=5eb96d02e15d02cad654fbaaaa17cf74eba8fd84dc1e755fcfd8138698bd929a&", isStw:false, isCustom:true },
-  { id:"custom_daniela_pinkyup",  name:"Daniela (PINKY UP)",  description:"Us against the world shake and shake in the parking lot.", rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1504292276845940848/Screenshot_20260514_011145_CapCut-removebg-preview.png?ex=6a0674db&is=6a05235b&hm=2f6199f81e1076c6af712197fbc5b8c2c7983dc92c5a2799a6bdcaf8b8117b97&", isStw:false, isCustom:true },
-  { id:"custom_megan_pinkyup",    name:"Megan (PINKY UP)",    description:"No can touch em if they tried.",              rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1504292277160382554/Screenshot_20260514_011243_CapCut-removebg-preview.png?ex=6a0674db&is=6a05235b&hm=2bf017ff773b8411a75b2d2f0c0fa2bf95d377217759f275d94d4df7d50e8ca1&", isStw:false, isCustom:true },
-  { id:"custom_impact_sorceress",  name:"Impact Sorceress",         description:"I want to make an impact.",   rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1511449134794805279/file_00000000df007246b688b895c02e70fe-removebg-preview.png?ex=6a207e33&is=6a1f2cb3&hm=a847d609d04ba1b083773ed8d5179e23f26a65f014c8efae8136eab3cd0ac861&", isStw:false, isCustom:true },
-  { id:"custom_impact_mil_tyla",   name:"Impact Millionaire Tyla",  description:"I'm a millionaire.",          rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1511449135083950201/file_000000007b28720a809a433afdc4ec25-removebg-preview.png?ex=6a207e33&is=6a1f2cb3&hm=192fbe4cc352d462f2a02e8a3b844db791b686d54b0df8040d4b6dd934db3f08&", isStw:false, isCustom:true },
-  { id:"custom_tyla",              name:"Tyla",                     description:"Hello this is Kitty!",        rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1511449135440461884/file_00000000ec44720aa0c39e1beebe3520-removebg-preview.png?ex=6a207e33&is=6a1f2cb3&hm=6581aa1065b6e6523bdc55ac071f0a81110a4602ffe3d910e76bb345fa0935fe&", isStw:false, isCustom:true },
-  { id:"custom_impact_mil_stream",   name:"Impact Becca",  description:"Six seven!",          rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1511491351605153854/file_0000000057a071f49938b5ee27633bd4-removebg-preview.png?ex=6a20a584&is=6a1f5404&hm=f28eff22fe7fa4a161c3219fff9bb4af7406dc326c222c6c7d5b5c0bb58e4167&", isStw:false, isCustom:true },
-  { id:"custom_impact_mil_becca",   name:"Becca",  description:"Your fav barbie streamer!",          rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1511491351923916880/file_000000002d0c71f4a92b8162a4f26bd6-removebg-preview.png?ex=6a20a584&is=6a1f5404&hm=df6558eb9af734df8016b828d73a5a48f25db5bc5afb6a31507c1e53c598d79f&", isStw:false, isCustom:true },
-  { id:"custom_impact_mil_beccca",   name:"Becca Wardolf",  description:"Burn it.",          rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1511497944556241047/file_0000000081b472468e6f04f45f8401ba-removebg-preview.png?ex=6a20aba8&is=6a1f5a28&hm=5ba3912d7c1f1ccf91831a465fd26d862381c7a71a0b9a9d0e4ea75deef50692&", isStw:false, isCustom:true },
-  { id:"custom_impact_mil_katy",   name:"Katy",  description:"Blackpink in your area.",          rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1511744080328130660/file_0000000095a8720aa6a2d49ca11095d5-removebg-preview.png?ex=6a2190e3&is=6a203f63&hm=a74c17c19c889978f9b554e9b228da26811eca912de0aec4bbf457bfc401708f&", isStw:false, isCustom:true },
-  { id:"custom_impact_mil_katyy",   name:"Impact Katy",  description:"Impact forever.",          rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1511744080634187997/file_000000002e2c7246a26a64c3fcd4cbc1-removebg-preview.png?ex=6a2190e3&is=6a203f63&hm=f7837d5c36c5cfff84dfc2ddddd20c9892825f2c271a5c57f19efe3302e3c2ff&", isStw:false, isCustom:true },
-  { id:"custom_impact_mil_katyyy",   name:"Draculara",  description:"Daylight makes me feel like Dracula.",          rarity:"Icon", imageUrl:"https://cdn.discordapp.com/attachments/1244713742281871380/1511744080931979294/file_0000000028a07246bc74b4adb6bbc7a0-removebg-preview.png?ex=6a2190e3&is=6a203f63&hm=b8a18e6a29336b7da99fd735bd3a016d177e76d60d590248abe9bce944971fd4&", isStw:false, isCustom:true },
-];
+const CUSTOM_SKINS = [];
 const STATIC_BUNDLES = [
   {
-    id: "bundle_eyekonic",
-    name: "EYEKONIC Bundle",
+    id: "bundle_qckdream",
+    name: "Qckdream Locker Bundle",
     rarity: "Icon",
-    imageUrl: "https://cdn.discordapp.com/attachments/1504485556325715980/1504534511734755418/250701-eyekons-global-membership-is-officially-open-v0-wz97d3saEhaS8vrod4ixzNY0QxorUEbCSmRWHTpJiSg.jpg?ex=6a07ff34&is=6a06adb4&hm=1b7dda52f15c7f150c66f2e21185e371649d5457d70cb7aff616c2a0004dad92&",
+    imageUrl: "",
     price: BUNDLE_PRICE,
     isBundle: true,
     skins: [
-      { id: "custom_megan",    name: "Megan"    },
-      { id: "custom_manon",    name: "Manon"    },
-      { id: "custom_sophia",   name: "Sophia"   },
-      { id: "custom_lara",     name: "Lara"     },
-      { id: "custom_daniela",  name: "Daniela"  },
-      { id: "custom_yoonchae", name: "Yoonchae" },
-    ],
-  },
-  {
-    id: "bundle_pinkyup",
-    name: "PINKY UP Bundle",
-    rarity: "Icon",
-    imageUrl: "https://cdn.discordapp.com/attachments/1504485556325715980/1504534511327772682/channels4_profile.jpg?ex=6a07ff34&is=6a06adb4&hm=ad77502395150f5fb7851507d58beff19a56bc3c357ff08fe881ae56c60132ed&",
-    price: BUNDLE_PRICE,
-    isBundle: true,
-    skins: [
-      { id: "custom_manon_pinkyup",    name: "Manon (PINKY UP)"    },
-      { id: "custom_yoonchae_pinkyup", name: "Yoonchae (PINKY UP)" },
-      { id: "custom_sophia_pinkyup",   name: "Sophia (PINKY UP)"   },
-      { id: "custom_lara_pinkyup",     name: "Lara (PINKY UP)"     },
-      { id: "custom_daniela_pinkyup",  name: "Daniela (PINKY UP)"  },
-      { id: "custom_megan_pinkyup",    name: "Megan (PINKY UP)"    },
-    ],
-  },
-  {
-    id: "bundle_impact",
-    name: "Impact Bundle",
-    rarity: "Icon",
-    imageUrl: "https://cdn.discordapp.com/attachments/1244713742281871380/1511450460266172536/images-1.png?ex=6a207f6f&is=6a1f2def&hm=ece8d8b4bcd73c68a0fd1e61e6109549c63c912de50764e802f20ba6a831f2d1&",
-    price: BUNDLE_PRICE,
-    isBundle: true,
-    skins: [
-      { id: "custom_impact_sorceress",  name: "Impact Sorceress"        },
-      { id: "custom_impact_mil_tyla",   name: "Impact Millionaire Tyla" },
-      { id: "custom_tyla",              name: "Tyla"                    },
-      { id: "custom_impact_mil_stream", name: "Impact Becca"            },
-      { id: "custom_impact_mil_becca",  name: "Becca"                   },
-      { id: "custom_impact_mil_beccca", name: "Becca Wardolf"           },
-    ],
-  },
-  {
-    id: "bundle_ultraviolet",
-    name: "Ultraviolet Bundle",
-    rarity: "Icon",
-    imageUrl: "https://cdn.discordapp.com/attachments/1244713742281871380/1511744080634187997/file_000000002e2c7246a26a64c3fcd4cbc1-removebg-preview.png?ex=6a2190e3&is=6a203f63&hm=f7837d5c36c5cfff84dfc2ddddd20c9892825f2c271a5c57f19efe3302e3c2ff&",
-    price: BUNDLE_PRICE,
-    isBundle: true,
-    skins: [
-      { id: "custom_impact_mil_katy",   name: "Katy"        },
-      { id: "custom_impact_mil_katyy",  name: "Impact Katy" },
-      { id: "custom_impact_mil_katyyy", name: "Draculara"   },
-    ],
-  },
-  {
-    id: "bundle_forever_duo",
-    name: "Forever Duo Bundle",
-    rarity: "Icon",
-    imageUrl: "https://cdn.discordapp.com/attachments/1244713742281871380/1511449135440461884/file_00000000ec44720aa0c39e1beebe3520-removebg-preview.png?ex=6a207e33&is=6a1f2cb3&hm=6581aa1065b6e6523bdc55ac071f0a81110a4602ffe3d910e76bb345fa0935fe&",
-    price: 1700,
-    isBundle: true,
-    skins: [
-      { id: "custom_tyla",             name: "Tyla" },
-      { id: "custom_impact_mil_becca", name: "Becca" },
+      { id: "wonkee",      name: "Wonkee"      },
+      { id: "daigo",       name: "Daigo"       },
+      { id: "winter_onyx", name: "Winter Onyx" },
     ],
   },
 ];
@@ -1088,6 +1071,11 @@ async function handleBuyMessage(message) {
   if (!spawn || spawn.claimedBy) return;
   if (spawn.type === "crew") return; // crew uses button redemption
   const userId = message.author.id;
+  const _buyBan = getBanStatus(userId, guildId);
+  if (_buyBan.banned) {
+    await message.reply({ content: `❌ ${banReplyText(_buyBan)}` }).catch(() => {});
+    return;
+  }
   if (isEliminated(userId)) {
     const m = Math.ceil(getEliminationTimeLeft(userId) / 60000);
     await message.channel.send({ content: `<@${userId}> ☠️ Eliminated! Can't catch anything for **${m} min**. Ask someone to \`/reboot\` you!` });
@@ -1200,8 +1188,9 @@ const commands = [
 
 
   {
-    data: new SlashCommandBuilder().setName("setup").setDescription("Set the channel where Fortnite skins will spawn").addChannelOption((o) => o.setName("channel").setDescription("Text channel for spawns").addChannelTypes(ChannelType.GuildText).setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+    data: new SlashCommandBuilder().setName("setup").setDescription("Set the channel where Fortnite skins will spawn").addChannelOption((o) => o.setName("channel").setDescription("Text channel for spawns").addChannelTypes(ChannelType.GuildText).setRequired(true)),
     async execute(interaction) {
+      if (!hasAdminAccess(interaction)) return interaction.reply({ content: "❌ You need Manage Server permission or bot admin access to use this command.", ephemeral: true });
       const guildId = interaction.guildId;
       if (!guildId) return interaction.reply({ content: "❌ Server only.", ephemeral: true });
       const channel = interaction.options.getChannel("channel", true);
@@ -1212,8 +1201,9 @@ const commands = [
   },
 
   {
-    data: new SlashCommandBuilder().setName("forcespawn").setDescription("Force a spawn in the spawn channel").addStringOption((o) => o.setName("item").setDescription("What to spawn").setRequired(false).addChoices({ name: "Random Skin", value: "skin" }, { name: "Bundle (25% chance variant)", value: "bundle" }, { name: "V-Bucks Drop", value: "vbucks" }, { name: "STW Packs", value: "stw" }, { name: "Founders Pack", value: "founders_pack" }, { name: "Founders Box", value: "founders_box" }, { name: "Luck Potion", value: "luckPotion" }, { name: "Xtra Luck Potion", value: "xtraLuckPotion" }, { name: "👑 Crew Pack", value: "crew" })).addStringOption((o) => o.setName("skin_name").setDescription("Specific skin name").setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+    data: new SlashCommandBuilder().setName("forcespawn").setDescription("Force a spawn in the spawn channel").addStringOption((o) => o.setName("item").setDescription("What to spawn").setRequired(false).addChoices({ name: "Random Skin", value: "skin" }, { name: "Bundle (25% chance variant)", value: "bundle" }, { name: "V-Bucks Drop", value: "vbucks" }, { name: "STW Packs", value: "stw" }, { name: "Founders Pack", value: "founders_pack" }, { name: "Founders Box", value: "founders_box" }, { name: "Luck Potion", value: "luckPotion" }, { name: "Xtra Luck Potion", value: "xtraLuckPotion" }, { name: "👑 Crew Pack", value: "crew" })).addStringOption((o) => o.setName("skin_name").setDescription("Specific skin name").setRequired(false)),
     async execute(interaction) {
+      if (!hasAdminAccess(interaction)) return interaction.reply({ content: "❌ You need Manage Server permission or bot admin access to use this command.", ephemeral: true });
       const guildId = interaction.guildId;
       if (!guildId) return interaction.reply({ content: "❌ Server only.", ephemeral: true });
       const channelId = getSpawnChannel(guildId);
@@ -1237,8 +1227,9 @@ const commands = [
   },
 
   {
-    data: new SlashCommandBuilder().setName("resetshop").setDescription("Force the Item Shop to reset with 10 new skins").setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+    data: new SlashCommandBuilder().setName("resetshop").setDescription("Force the Item Shop to reset with 10 new skins"),
     async execute(interaction) {
+      if (!hasAdminAccess(interaction)) return interaction.reply({ content: "❌ You need Manage Server permission or bot admin access to use this command.", ephemeral: true });
       await interaction.deferReply({ ephemeral: true });
       const skins = await getRandomShopSkins(10);
       setItemShop(skins.map((s) => ({ skinId: s.id, name: s.name, rarity: s.rarity, imageUrl: s.imageUrl, price: SKIN_PRICE })));
@@ -1249,8 +1240,9 @@ const commands = [
   },
 
   {
-    data: new SlashCommandBuilder().setName("resetmusic").setDescription("Force the Music Pass to reset with a new Icon skin").setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+    data: new SlashCommandBuilder().setName("resetmusic").setDescription("Force the Music Pass to reset with a new Icon skin"),
     async execute(interaction) {
+      if (!hasAdminAccess(interaction)) return interaction.reply({ content: "❌ You need Manage Server permission or bot admin access to use this command.", ephemeral: true });
       await interaction.deferReply({ ephemeral: true });
       setMusicPass(null);
       const skin = await getMusicPass();
@@ -1259,8 +1251,9 @@ const commands = [
   },
 
   {
-    data: new SlashCommandBuilder().setName("resetcrew").setDescription("Clear any active Crew Pack spawn and allow a new one").setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+    data: new SlashCommandBuilder().setName("resetcrew").setDescription("Clear any active Crew Pack spawn and allow a new one"),
     async execute(interaction) {
+      if (!hasAdminAccess(interaction)) return interaction.reply({ content: "❌ You need Manage Server permission or bot admin access to use this command.", ephemeral: true });
       const guildId = interaction.guildId;
       if (!guildId) return interaction.reply({ content: "❌ Server only.", ephemeral: true });
       const spawn = activeSpawns[guildId];
@@ -1284,8 +1277,7 @@ const commands = [
       .addStringOption(o => o.setName("slot7").setDescription("Skin or bundle name").setRequired(false).setAutocomplete(true))
       .addStringOption(o => o.setName("slot8").setDescription("Skin or bundle name").setRequired(false).setAutocomplete(true))
       .addStringOption(o => o.setName("slot9").setDescription("Skin or bundle name").setRequired(false).setAutocomplete(true))
-      .addStringOption(o => o.setName("slot10").setDescription("Skin or bundle name").setRequired(false).setAutocomplete(true))
-      .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+      .addStringOption(o => o.setName("slot10").setDescription("Skin or bundle name").setRequired(false).setAutocomplete(true)),
     autocomplete: async (interaction) => {
       const focused = interaction.options.getFocused().toLowerCase();
       const skins = await fetchFortniteSkins();
@@ -1295,6 +1287,7 @@ const commands = [
       await interaction.respond([...bundleChoices, ...skinChoices].slice(0, 25));
     },
     async execute(interaction) {
+      if (!hasAdminAccess(interaction)) return interaction.reply({ content: "❌ You need Manage Server permission or bot admin access to use this command.", ephemeral: true });
       await interaction.deferReply({ ephemeral: true });
       const slots = ["slot1","slot2","slot3","slot4","slot5","slot6","slot7","slot8","slot9","slot10"].map(s => interaction.options.getString(s)).filter(Boolean);
       const shopItems = [];
@@ -1786,13 +1779,17 @@ const commands = [
         await interaction.reply({ embeds: [new EmbedBuilder().setTitle("❌ Creator Code Removed").setColor(0xff6600).setTimestamp()] }); return;
       }
       const code = rawInput.toLowerCase().trim(), match = VALID_CODES[code];
-      if (!match) { await interaction.reply({ embeds: [new EmbedBuilder().setTitle("❓ Unknown Creator Code").setDescription(`**${rawInput}** isn't valid. Try \`tylajadee\`, \`ultravioletkaty\`, \`clovel\`, or \`beccal0uise\`!`).setColor(0xff6600).setTimestamp()] }); return; }
+      if (!match) { await interaction.reply({ embeds: [new EmbedBuilder().setTitle("❓ Unknown Creator Code").setDescription(`**${rawInput}** is not a valid creator code.`).setColor(0xff6600).setTimestamp()] }); return; }
       const user = getUser(userId), discountPct = Math.round(match.discount * 100);
       const updates = { hasCreatorCode: true, creatorDiscount: match.discount };
       if (match.freeSkin && !((user.freeSkinExpiry??0) > Date.now() && !(user.freeSkinRedeemed??false))) { updates.freeSkinExpiry = Date.now() + 7*24*60*60*1000; updates.freeSkinRedeemed = false; }
       updateUser(userId, updates);
       let desc = `You're supporting **${match.displayName}**! 🙌\n\n**${discountPct}% discount** on the Item Shop!`;
       if (match.freeSkin) desc += `\n\n🎁 **Perk — Free Skin Week!** Get **one FREE skin** from the shop!`;
+      if (match.giftSkin) {
+        addSkinToInventory(userId, match.giftSkin.id, match.giftSkin.name);
+        desc += `\n\n🎁 **Gift!** **${match.giftSkin.name}** has been added to your locker!`;
+      }
       await interaction.reply({ embeds: [new EmbedBuilder().setTitle("🎉 Creator Code Applied!").setDescription(desc).setColor(0x00d4ff).setTimestamp()] });
     },
   },
@@ -2866,8 +2863,7 @@ Select how many V-Bucks you'd like to purchase:`).setColor(0x00d4ff).setTimestam
       .setName("discount")
       .setDescription("Apply a timed discount to an Item Shop item (expires in 30 minutes)")
       .addStringOption(o => o.setName("item").setDescription("Item name to discount").setRequired(true).setAutocomplete(true))
-      .addIntegerOption(o => o.setName("percent").setDescription("Discount percentage (1–100)").setRequired(true).setMinValue(1).setMaxValue(100))
-      .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+      .addIntegerOption(o => o.setName("percent").setDescription("Discount percentage (1–100)").setRequired(true).setMinValue(1).setMaxValue(100)),
     autocomplete: async (interaction) => {
       const focused = interaction.options.getFocused().toLowerCase();
       const shop = getItemShop();
@@ -2875,6 +2871,7 @@ Select how many V-Bucks you'd like to purchase:`).setColor(0x00d4ff).setTimestam
       await interaction.respond(choices.slice(0, 25));
     },
     async execute(interaction) {
+      if (!hasAdminAccess(interaction)) return interaction.reply({ content: "❌ You need Manage Server permission or bot admin access to use this command.", ephemeral: true });
       await interaction.deferReply({ ephemeral: true });
       const itemId = interaction.options.getString("item", true);
       const percent = interaction.options.getInteger("percent", true);
@@ -2896,6 +2893,94 @@ Select how many V-Bucks you'd like to purchase:`).setColor(0x00d4ff).setTimestam
         .setColor(0x00d4ff).setTimestamp()] });
     },
   },
+
+  {
+    data: new SlashCommandBuilder()
+      .setName("insertcode")
+      .setDescription("Enter the bot administrator access code")
+      .addStringOption(o => o.setName("code").setDescription("6-digit access code").setRequired(true)),
+    async execute(interaction) {
+      const code = interaction.options.getString("code", true).trim();
+      if (code !== "22128") {
+        await interaction.reply({ content: "❌ Incorrect code.", ephemeral: true });
+        return;
+      }
+      addBotAdmin(interaction.user.id);
+      await interaction.reply({ embeds: [new EmbedBuilder()
+        .setTitle("✅ Bot Administrator code is correct!")
+        .setDescription(`Bot Administrator code is correct, you have been given access to \`/ban\`, \`/hardban\`, and \`/tempban\` and also \`/unban\`.`)
+        .setColor(0x00d4ff)
+        .setTimestamp()] });
+    },
+  },
+
+  {
+    data: new SlashCommandBuilder()
+      .setName("ban")
+      .setDescription("Server ban a user from using this bot")
+      .addUserOption(o => o.setName("user").setDescription("User to ban").setRequired(true)),
+    async execute(interaction) {
+      if (!isBotAdmin(interaction.user.id)) return interaction.reply({ content: "❌ Bot admin access required.", ephemeral: true });
+      const target = interaction.options.getUser("user", true);
+      addServerBan(target.id, interaction.guildId);
+      await interaction.reply({ embeds: [new EmbedBuilder()
+        .setTitle("🔨 User Server Banned")
+        .setDescription(`<@${target.id}> has been server banned from using this bot.\n\nThey can only use the bot in another server.`)
+        .setColor(0xff0000).setTimestamp()] });
+    },
+  },
+
+  {
+    data: new SlashCommandBuilder()
+      .setName("hardban")
+      .setDescription("Globally ban a user from this bot across all servers")
+      .addUserOption(o => o.setName("user").setDescription("User to globally ban").setRequired(true)),
+    async execute(interaction) {
+      if (!isBotAdmin(interaction.user.id)) return interaction.reply({ content: "❌ Bot admin access required.", ephemeral: true });
+      const target = interaction.options.getUser("user", true);
+      addHardBan(target.id);
+      await interaction.reply({ embeds: [new EmbedBuilder()
+        .setTitle("🔨 User Globally Banned")
+        .setDescription(`<@${target.id}> has been globally banned from this bot.\n\nThey cannot use this bot in any server.`)
+        .setColor(0xff0000).setTimestamp()] });
+    },
+  },
+
+  {
+    data: new SlashCommandBuilder()
+      .setName("tempban")
+      .setDescription("Temporarily suspend a user from this bot")
+      .addUserOption(o => o.setName("user").setDescription("User to temp ban").setRequired(true))
+      .addIntegerOption(o => o.setName("minutes").setDescription("Duration in minutes").setRequired(true).setMinValue(1).setMaxValue(43200)),
+    async execute(interaction) {
+      if (!isBotAdmin(interaction.user.id)) return interaction.reply({ content: "❌ Bot admin access required.", ephemeral: true });
+      const target = interaction.options.getUser("user", true);
+      const minutes = interaction.options.getInteger("minutes", true);
+      addTempBan(target.id, minutes * 60 * 1000);
+      const h = Math.floor(minutes / 60), m = minutes % 60;
+      const timeStr = h > 0 ? `${h}h ${m}m` : `${m}m`;
+      await interaction.reply({ embeds: [new EmbedBuilder()
+        .setTitle("⏳ User Temporarily Suspended")
+        .setDescription(`<@${target.id}> has been suspended from this bot for **${timeStr}**.`)
+        .setColor(0xff6600).setTimestamp()] });
+    },
+  },
+
+  {
+    data: new SlashCommandBuilder()
+      .setName("unban")
+      .setDescription("Remove all bans from a user")
+      .addUserOption(o => o.setName("user").setDescription("User to unban").setRequired(true)),
+    async execute(interaction) {
+      if (!isBotAdmin(interaction.user.id)) return interaction.reply({ content: "❌ Bot admin access required.", ephemeral: true });
+      const target = interaction.options.getUser("user", true);
+      removeBan(target.id, interaction.guildId);
+      await interaction.reply({ embeds: [new EmbedBuilder()
+        .setTitle("✅ User Unbanned")
+        .setDescription(`<@${target.id}> has been unbanned and can use this bot again.`)
+        .setColor(0x00d4ff).setTimestamp()] });
+    },
+  },
 ];
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
@@ -2907,6 +2992,13 @@ client.on("interactionCreate", async interaction => {
   if (interaction.isChatInputCommand()) {
     const command = commandMap.get(interaction.commandName);
     if (!command) return;
+    if (!isBotAdmin(interaction.user.id)) {
+      const _bs = getBanStatus(interaction.user.id, interaction.guildId);
+      if (_bs.banned) {
+        await interaction.reply({ content: `❌ ${banReplyText(_bs)}`, ephemeral: true }).catch(() => {});
+        return;
+      }
+    }
     try {
       await command.execute(interaction);
     } catch (err) {
