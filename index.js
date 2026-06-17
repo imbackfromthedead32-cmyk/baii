@@ -186,8 +186,14 @@ function calculateLevelFromXP(xp) {
 function getUser(userId) {
   const key = _userKey(userId);
   if (!_db.users[key]) {
-    _db.users[key] = defaultUser();
-    save();
+    if (_db.users[userId] && userId !== key) {
+      _db.users[key] = JSON.parse(JSON.stringify(_db.users[userId]));
+      delete _db.users[userId];
+      save();
+    } else {
+      _db.users[key] = defaultUser();
+      save();
+    }
   }
   const def = defaultUser();
   let changed = false;
@@ -1627,7 +1633,7 @@ const commands = [
         const slice = names.slice(p*10, p*10+10);
         const lines = slice.map((name, i) => `${p*10+i+1}. **${name}**`);
         const matInfo = cu.buildCharges > 0 ? `${BUILD_MATS[cu.buildMaterial]?.label ?? "🪵 Wood"} — ${cu.buildCharges} charge${cu.buildCharges !== 1 ? "s" : ""}` : "None";
-        const itemsSection = `**Items:**\n🍀 Luck: ${cu.luckPotion||0} | 🔮 Xtra: ${cu.xtraLuckPotion||0} | ⚡ Godly: ${cu.godlyLuckPotion||0}\n🌟 God Chests: ${cu.godChest||0} | 🔵 Mysterious: ${cu.mysteriousChest||0}\n📦 Founders Boxes: ${cu.foundersBoxes||0} | 🏗️ Build: ${matInfo}`;
+        const itemsSection = `**Items:**\n🍀 Luck: ${cu.luckPotion||0} | 🔮 Xtra: ${cu.xtraLuckPotion||0} | ⚡ Godly: ${cu.godlyLuckPotion||0}\n🌟 God Chests: ${cu.godChest||0} | 🔵 Mysterious: ${cu.mysteriousChest||0}\n📦 STW Boxes: ${cu.boxes||0} | 📦 Founders Boxes: ${cu.foundersBoxes||0} | 🏗️ Build: ${matInfo}`;
         const embed = new EmbedBuilder()
           .setTitle(`🎒 ${interaction.user.username}'s Inventory`)
           .setDescription((lines.length ? lines.join("\n")+"\n\n" : "*No skins yet.*\n\n") + itemsSection + `\n\n💰 **${cu.infiniteVbucks ? "∞" : cu.vbucks.toLocaleString()} V-Bucks** | ✨ Luck: **${luck}**`)
@@ -1642,12 +1648,20 @@ const commands = [
 
         const hasGod  = (cu.godChest ?? 0) > 0;
         const hasMyst = (cu.mysteriousChest ?? 0) > 0;
+        const hasSTW  = (cu.boxes ?? 0) > 0;
+        const hasFB   = (cu.foundersBoxes ?? 0) > 0;
+
         const chestRow = (hasGod || hasMyst) ? new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId("inv_open_god").setLabel(`🌟 Open God Chest (${cu.godChest ?? 0})`).setStyle(ButtonStyle.Success).setDisabled(!hasGod),
-          new ButtonBuilder().setCustomId("inv_open_myst").setLabel(`🔵 Open Mysterious Chest (${cu.mysteriousChest ?? 0})`).setStyle(ButtonStyle.Primary).setDisabled(!hasMyst)
+          new ButtonBuilder().setCustomId("inv_open_god").setLabel(`🌟 God Chest (${cu.godChest ?? 0})`).setStyle(ButtonStyle.Success).setDisabled(!hasGod),
+          new ButtonBuilder().setCustomId("inv_open_myst").setLabel(`🔵 Mysterious (${cu.mysteriousChest ?? 0})`).setStyle(ButtonStyle.Primary).setDisabled(!hasMyst)
         ) : null;
 
-        const components = chestRow ? [navRow, chestRow] : [navRow];
+        const boxRow = (hasSTW || hasFB) ? new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId("inv_open_stw").setLabel(`📦 STW Box (${cu.boxes ?? 0})`).setStyle(ButtonStyle.Secondary).setDisabled(!hasSTW),
+          new ButtonBuilder().setCustomId("inv_open_fb").setLabel(`📦 Founders Box (${cu.foundersBoxes ?? 0})`).setStyle(ButtonStyle.Secondary).setDisabled(!hasFB)
+        ) : null;
+
+        const components = [navRow, ...(chestRow ? [chestRow] : []), ...(boxRow ? [boxRow] : [])];
         return { embed, components };
       };
 
@@ -1672,6 +1686,58 @@ const commands = [
           }, 1500);
         } else if (btn.customId === "inv_open_myst") {
           await openMysteriousChestInteraction(btn, userId);
+          setTimeout(async () => {
+            const { embed: e, components: c } = buildInvPage(page);
+            await interaction.editReply({ embeds: [e], components: c }).catch(() => {});
+          }, 1500);
+        } else if (btn.customId === "inv_open_stw") {
+          const cu2 = getUser(userId);
+          if ((cu2.boxes ?? 0) <= 0) { await btn.reply({ content: "❌ No STW Boxes!", ephemeral: true }); return; }
+          updateUser(userId, { boxes: cu2.boxes - 1, boxesOpened: (cu2.boxesOpened ?? 0) + 1 });
+          const stwRoll = Math.random();
+          let stwTitle, stwDesc, stwColor;
+          if (stwRoll < 0.05) {
+            updateUser(userId, { godChest: (getUser(userId).godChest ?? 0) + 1 });
+            stwTitle = "🌟 STW Box — God Chest!"; stwDesc = "You cracked open the STW Box and found a **God Chest**!\n\n🌟 Open it from /inventory!"; stwColor = 0xffd700;
+          } else if (stwRoll < 0.25) {
+            const vb = 500 + Math.floor(Math.random() * 500);
+            addVbucks(userId, vb);
+            stwTitle = `💰 STW Box — ${vb} V-Bucks!`; stwDesc = `You opened a STW Box and found **${vb} V-Bucks**!\n\n💳 Added to your balance.`; stwColor = 0x00d4ff;
+          } else {
+            const vb = 100 + Math.floor(Math.random() * 200);
+            addVbucks(userId, vb);
+            stwTitle = `📦 STW Box — ${vb} V-Bucks`; stwDesc = `You opened a STW Box and found **${vb} V-Bucks**!`; stwColor = 0xff6600;
+          }
+          const remainSTW = getUser(userId).boxes ?? 0;
+          await btn.reply({ embeds: [new EmbedBuilder().setTitle(stwTitle).setDescription(`${stwDesc}\n\n📦 **Remaining STW Boxes:** ${remainSTW}`).setColor(stwColor).setTimestamp()], ephemeral: false });
+          checkFoundersQuests(userId);
+          setTimeout(async () => {
+            const { embed: e, components: c } = buildInvPage(page);
+            await interaction.editReply({ embeds: [e], components: c }).catch(() => {});
+          }, 1500);
+        } else if (btn.customId === "inv_open_fb") {
+          const cu3 = getUser(userId);
+          if (!cu3.hasFoundersPack) { await btn.reply({ content: "❌ You need a Founders Pack to open Founders Boxes!", ephemeral: true }); return; }
+          if ((cu3.foundersBoxes ?? 0) <= 0) { await btn.reply({ content: "❌ No Founders Boxes!", ephemeral: true }); return; }
+          updateUser(userId, { foundersBoxes: cu3.foundersBoxes - 1 });
+          const fbRoll = Math.random();
+          let fbTitle, fbDesc, fbColor;
+          if (fbRoll < 0.03) {
+            updateUser(userId, { infiniteVbucks: true });
+            fbTitle = "⚡ JACKPOT — Infinite V-Bucks!"; fbDesc = "You cracked open the Founders Box and found **INFINITE V-BUCKS**!\n\n⚡ Your balance is now unlimited. Spend freely!"; fbColor = 0xffd700;
+          } else if (fbRoll < 0.13) {
+            updateUser(userId, { godChest: (getUser(userId).godChest ?? 0) + 1 });
+            fbTitle = "🌟 Founders Box — God Chest!"; fbDesc = "You found a **God Chest** inside the Founders Box!\n\n🌟 Open it right here from /inventory."; fbColor = 0xffd700;
+          } else if (fbRoll < 0.33) {
+            updateUser(userId, { mysteriousChest: (getUser(userId).mysteriousChest ?? 0) + 1 });
+            fbTitle = "🔵 Founders Box — Mysterious Chest!"; fbDesc = "A **Mysterious Chest** tumbled out of the Founders Box!\n\n🔵 Open it right here from /inventory."; fbColor = 0x4444ff;
+          } else {
+            const vb = rollFoundersBoxVbucks();
+            addVbucks(userId, vb);
+            fbTitle = `💰 Founders Box — ${vb.toLocaleString()} V-Bucks!`; fbDesc = `You cracked open the Founders Box and found **${vb.toLocaleString()} V-Bucks**!\n\n💳 Added to your balance.`; fbColor = 0x00d4ff;
+          }
+          const remainFB = getUser(userId).foundersBoxes ?? 0;
+          await btn.reply({ embeds: [new EmbedBuilder().setTitle(fbTitle).setDescription(`${fbDesc}\n\n📦 **Remaining Founders Boxes:** ${remainFB}`).setColor(fbColor).setTimestamp()], ephemeral: false });
           setTimeout(async () => {
             const { embed: e, components: c } = buildInvPage(page);
             await interaction.editReply({ embeds: [e], components: c }).catch(() => {});
@@ -2402,13 +2468,6 @@ const commands = [
       const userId = interaction.user.id;
       resetQuestsIfNeeded(userId); addInteraction(userId);
       const user = getUser(userId);
-      if ((user.stwPacks ?? 0) <= 0 && (!user.stwQuestCompleted || user.stwQuestCompleted.length === 0)) {
-        await interaction.editReply({ embeds: [new EmbedBuilder()
-          .setTitle("📦 Save The World")
-          .setDescription("You don't have any STW Packs!\n\n**How to get them:**\nWatch the spawn channel — STW Packs drop occasionally. Type `buy` to claim them when they appear.\n\nOnce you have packs, come back here to tackle quests and earn rewards!")
-          .setColor(0xff6600).setTimestamp()] });
-        return;
-      }
       if (!user.stwQuestBaseline || Object.keys(user.stwQuestBaseline).length === 0) {
         const baseline = {};
         for (const q of STW_QUESTS) baseline[q.stat] = user[q.stat] ?? 0;
@@ -2432,6 +2491,8 @@ const commands = [
         return `${status} **${q.name}**\n> ${q.desc}\n> ${bar}\n> 🏆 Reward: **${q.reward.vbucks} V-Bucks** + **${q.reward.stwBoxes} STW Box(es)**`;
       });
       const claimable = quests.filter(q => q.claimable);
+      const hasPack = (freshUser.stwPacks ?? 0) > 0;
+      const packNote = hasPack ? `📦 **STW Packs:** ${freshUser.stwPacks}` : `📦 **STW Packs:** 0 — *(catch STW Packs in the spawn channel to claim quest rewards)*`;
       const components = claimable.length > 0
         ? [new ActionRowBuilder().addComponents(
             claimable.slice(0,5).map(q =>
@@ -2441,9 +2502,9 @@ const commands = [
         : [];
       const embed = new EmbedBuilder()
         .setTitle("📦 Save The World — Quests")
-        .setDescription(`**STW Packs:** ${freshUser.stwPacks ?? 0}\n\n${questLines.join("\n\n")}`)
+        .setDescription(`${packNote}\n\n${questLines.join("\n\n")}`)
         .setColor(0xff6600)
-        .setFooter({ text: "Complete all 5 quests to start a new cycle!" })
+        .setFooter({ text: "Complete all 5 quests to start a new cycle! (STW Pack required to claim)" })
         .setTimestamp();
       const msg = await interaction.editReply({ embeds: [embed], components });
       if (claimable.length === 0) return;
@@ -2465,7 +2526,7 @@ const commands = [
         });
         await btn.update({ embeds: [new EmbedBuilder()
           .setTitle("✅ Quest Claimed!")
-          .setDescription(`**${q.name}** complete!\n\n🏆 **+${q.reward.vbucks} V-Bucks**\n📦 **+${q.reward.stwBoxes} STW Box(es)**\n\n*Use \`/savetheworld\` to check remaining quests.*`)
+          .setDescription(`**${q.name}** complete!\n\n🏆 **+${q.reward.vbucks} V-Bucks**\n📦 **+${q.reward.stwBoxes} STW Box(es)**\n\nOpen your STW Boxes from \`/inventory\`!`)
           .setColor(0xff6600).setTimestamp()], components: [] });
         col.stop();
       });
@@ -2473,7 +2534,7 @@ const commands = [
   },
 
   {
-    data: new SlashCommandBuilder().setName("founderspack").setDescription("Open a Founders Box to earn exclusive rewards"),
+    data: new SlashCommandBuilder().setName("founderspack").setDescription("View Founders quests and open Founders Boxes"),
     async execute(interaction) {
       await interaction.deferReply();
       const userId = interaction.user.id;
@@ -2486,57 +2547,29 @@ const commands = [
           .setColor(0xffd700).setTimestamp()] });
         return;
       }
-      if ((user.foundersBoxes ?? 0) <= 0) {
-        await interaction.editReply({ embeds: [new EmbedBuilder()
-          .setTitle("📦 Founders Box")
-          .setDescription(`You have a Founders Pack but **no Founders Boxes** to open.\n\nWatch the spawn channel — Founders Boxes drop occasionally. Claim them with \`buy\`.\n\n🌟 **Founders Pack:** Owned\n📦 **Founders Boxes:** 0`)
-          .setColor(0xffd700).setTimestamp()] });
-        return;
-      }
-      const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId("fb_open").setLabel(`📦 Open Founders Box (${user.foundersBoxes} available)`).setStyle(ButtonStyle.Success)
-      );
-      const msg = await interaction.editReply({ embeds: [new EmbedBuilder()
-        .setTitle("📦 Founders Box")
-        .setDescription(`🌟 **Founders Pack:** Owned\n📦 **Boxes available:** ${user.foundersBoxes}\n\nOpen a box to receive one of the following:\n\n⚡ **Infinite V-Bucks** *(rare!)*\n🌟 **God Chest**\n🔵 **Mysterious Chest**\n💰 **V-Bucks** (100–1,500)\n\nPress the button to open one!`)
-        .setColor(0xffd700).setTimestamp()], components: [row] });
-      const col = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 30000, filter: b => b.user.id === userId });
-      col.on("collect", async btn => {
-        const cu = getUser(userId);
-        if ((cu.foundersBoxes ?? 0) <= 0) { await btn.update({ content: "❌ No Founders Boxes left!", embeds: [], components: [] }); return; }
-        updateUser(userId, { foundersBoxes: cu.foundersBoxes - 1 });
-        const roll = Math.random();
-        let title, desc, color;
-        if (roll < 0.03) {
-          updateUser(userId, { infiniteVbucks: true });
-          title = "⚡ JACKPOT — Infinite V-Bucks!";
-          desc = "You cracked open the box and found **INFINITE V-BUCKS**!\n\n⚡ Your balance is now unlimited. Spend freely!";
-          color = 0xffd700;
-        } else if (roll < 0.13) {
-          updateUser(userId, { godChest: (getUser(userId).godChest ?? 0) + 1 });
-          title = "🌟 God Chest!";
-          desc = "You found a **God Chest** inside the Founders Box!\n\n🌟 Use it from your profile — it contains extraordinary loot.";
-          color = 0xffd700;
-        } else if (roll < 0.33) {
-          updateUser(userId, { mysteriousChest: (getUser(userId).mysteriousChest ?? 0) + 1 });
-          title = "🔵 Mysterious Chest!";
-          desc = "A **Mysterious Chest** tumbled out of the Founders Box!\n\n🔵 Open it from your profile for a surprise reward.";
-          color = 0x4444ff;
-        } else {
-          const vb = rollFoundersBoxVbucks();
-          addVbucks(userId, vb);
-          title = "💰 V-Bucks!";
-          desc = `You cracked open the box and found **${vb.toLocaleString()} V-Bucks**!\n\n💳 Added to your balance.`;
-          color = 0x00d4ff;
-        }
-        const remaining = getUser(userId).foundersBoxes ?? 0;
-        await btn.update({ embeds: [new EmbedBuilder()
-          .setTitle(title)
-          .setDescription(`${desc}\n\n📦 **Remaining boxes:** ${remaining}`)
-          .setColor(color).setTimestamp()], components: [] });
-        col.stop();
+      if (!user.foundersQuests || user.foundersQuests.length === 0) assignFoundersQuests(userId);
+      const freshUser = getUser(userId);
+      checkFoundersQuests(userId);
+      const fu2 = getUser(userId);
+      const questLines = (fu2.foundersQuests ?? []).map(q => {
+        const val = fu2[q.stat] ?? 0;
+        const progress = Math.min(val, q.required);
+        const bar = `[${"█".repeat(Math.floor((progress/q.required)*10))}${"░".repeat(10-Math.floor((progress/q.required)*10))}] ${progress}/${q.required}`;
+        return q.completed
+          ? `✅ ~~**${q.label}**~~`
+          : `🔵 **${q.label}**\n> ${bar}`;
       });
-      col.on("end", (_, r) => { if (r === "time") interaction.editReply({ components: [] }).catch(() => {}); });
+      const allDone = (fu2.foundersQuests ?? []).every(q => q.completed);
+      const boxNote = (fu2.foundersBoxes ?? 0) > 0
+        ? `\n\n📦 **Founders Boxes:** ${fu2.foundersBoxes} — open them from \`/inventory\`!`
+        : `\n\n📦 **Founders Boxes:** 0 — watch the spawn channel for more!`;
+      const embed = new EmbedBuilder()
+        .setTitle("🌟 Founders Pack — Quests")
+        .setDescription(`🌟 **Founders Pack:** Owned${boxNote}\n\n**Quests:**\n${questLines.join("\n")}${allDone ? "\n\n🎉 All quests complete! New quests will be assigned soon." : ""}`)
+        .setColor(0xffd700)
+        .setFooter({ text: "Complete quests to progress! Open Founders Boxes from /inventory." })
+        .setTimestamp();
+      await interaction.editReply({ embeds: [embed] });
     },
   },
 
@@ -2631,123 +2664,6 @@ const commands = [
         col.stop();
       });
       col.on("end", (_, r) => { if (r === "time") interaction.editReply({ components: [] }).catch(() => {}); });
-    },
-  },
-
-  {
-    data: new SlashCommandBuilder()
-      .setName("buyvbucks")
-      .setDescription("Purchase V-Bucks using your Epic Games card"),
-    async execute(interaction) {
-      const userId = interaction.user.id;
-      const COOLDOWN_MS = 2 * 60 * 60 * 1000;
-      const lastUsed = purchaseCooldowns.get(`vbucks_${userId}`) ?? 0;
-      const remaining = COOLDOWN_MS - (Date.now() - lastUsed);
-      if (remaining > 0) {
-        const h = Math.floor(remaining / 3600000), m = Math.floor((remaining % 3600000) / 60000), s = Math.floor((remaining % 60000) / 1000);
-        await interaction.reply({ ephemeral: true, embeds: [new EmbedBuilder().setTitle("⏳ Cooldown Active").setDescription(`You can only purchase V-Bucks once every **2 hours**.
-
-⏱️ **Time remaining:** ${h}h ${m}m ${s}s`).setColor(0xff6600).setTimestamp()], ephemeral: true });
-        return;
-      }
-      const modal = new ModalBuilder().setCustomId("buyvbucks_auth_modal").setTitle("💳 Verify Payment");
-      modal.addComponents(
-        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("card_number").setLabel("Epic Games Card Number").setStyle(TextInputStyle.Short).setPlaceholder("XXXX-XXXX-XXXX").setRequired(true)),
-        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("employee_id").setLabel("Epic Games Employee ID").setStyle(TextInputStyle.Short).setPlaceholder("Enter your employee ID").setRequired(true))
-      );
-      await interaction.showModal(modal);
-      const submitted = await interaction.awaitModalSubmit({ time: 90000 }).catch(() => null);
-      if (!submitted) return;
-      const enteredCard = submitted.fields.getTextInputValue("card_number").trim().replace(/\s/g, "");
-      const enteredId = submitted.fields.getTextInputValue("employee_id").trim();
-      const correctCard = "6767-6767-6767";
-      const correctId = "77767774422006769";
-      const cardOk = enteredCard === correctCard.replace(/-/g, "") || enteredCard === correctCard;
-      const idOk = enteredId === correctId;
-      if (!cardOk || !idOk) {
-        await submitted.reply({ embeds: [new EmbedBuilder().setTitle("❌ Payment Declined").setDescription(!cardOk ? "That card number is invalid. Use format **XXXX-XXXX-XXXX**." : "That employee ID is not recognized in the Epic Games system.").setColor(0xff0000).setTimestamp()], ephemeral: true });
-        return;
-      }
-      await submitted.deferReply({ ephemeral: true });
-      await new Promise((r) => setTimeout(r, 1500));
-      const row1 = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId("bv_1000").setLabel("1,000 V-Bucks").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId("bv_2800").setLabel("2,800 V-Bucks").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId("bv_5000").setLabel("5,000 V-Bucks").setStyle(ButtonStyle.Primary),
-      );
-      const row2 = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId("bv_13500").setLabel("13,500 V-Bucks").setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId("bv_22500").setLabel("22,500 V-Bucks").setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId("bv_55000").setLabel("55,000 V-Bucks").setStyle(ButtonStyle.Danger),
-      );
-      const shopMsg = await submitted.editReply({
-        embeds: [new EmbedBuilder().setTitle("💳 Buy V-Bucks — Epic Games Card").setDescription(`✅ **Card verified!**
-
-🏢 **Employee ID:** \`${correctId}\`
-💳 **Card:** \`6767-6767-****\`
-
-Select how many V-Bucks you'd like to purchase:`).setColor(0x00d4ff).setTimestamp()],
-        components: [row1, row2],
-        fetchReply: true,
-      });
-      const amountMap = { bv_1000: 1000, bv_2800: 2800, bv_5000: 5000, bv_13500: 13500, bv_22500: 22500, bv_55000: 55000 };
-      const pkgCollector = shopMsg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 60000, filter: (b) => b.user.id === userId });
-      pkgCollector.on("collect", async (btn) => {
-        const chosenAmount = amountMap[btn.customId];
-        if (!chosenAmount) return;
-        pkgCollector.stop();
-        const confirmRow = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId("bv_yes").setLabel("✅ Yes, buy now").setStyle(ButtonStyle.Success),
-          new ButtonBuilder().setCustomId("bv_no").setLabel("❌ No, cancel").setStyle(ButtonStyle.Danger),
-          new ButtonBuilder().setCustomId("bv_gift").setLabel("🎁 Wanna Gift?").setStyle(ButtonStyle.Secondary),
-        );
-        await btn.update({
-          embeds: [new EmbedBuilder().setTitle(`💳 Confirm — ${chosenAmount.toLocaleString()} V-Bucks`).setDescription(`Are you sure you want to purchase **${chosenAmount.toLocaleString()} V-Bucks**?
-
-🏢 **Employee ID:** \`${correctId}\`
-💳 **Card:** \`6767-6767-****\``).setColor(0xffaa00).setTimestamp()],
-          components: [confirmRow],
-        });
-        const confirmCollector = shopMsg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 60000, filter: (b) => b.user.id === userId });
-        confirmCollector.on("collect", async (cb) => {
-          confirmCollector.stop();
-          if (cb.customId === "bv_no") {
-            await cb.update({ embeds: [new EmbedBuilder().setTitle("❌ Purchase Cancelled").setDescription("No V-Bucks were charged.").setColor(0x888888).setTimestamp()], components: [] });
-            return;
-          }
-          if (cb.customId === "bv_yes") {
-            addVbucks(userId, chosenAmount);
-            purchaseCooldowns.set(`vbucks_${userId}`, Date.now());
-            const after = getUser(userId);
-            await cb.update({ embeds: [new EmbedBuilder().setTitle("✅ Purchase Successful!").setDescription(`**+${chosenAmount.toLocaleString()} V-Bucks** added to your balance!
-
-💰 **New V-Bucks balance:** ${after.infiniteVbucks ? "∞" : after.vbucks.toLocaleString()}
-
-🏢 **Employee ID:** \`${correctId}\`
-💳 **Card:** \`6767-6767-****\``).setColor(0x00d4ff).setTimestamp()], components: [] });
-            return;
-          }
-          if (cb.customId === "bv_gift") {
-            const giftRow = new ActionRowBuilder().addComponents(new UserSelectMenuBuilder().setCustomId("bv_gift_user").setPlaceholder("Select a player to gift V-Bucks to...").setMinValues(1).setMaxValues(1));
-            await cb.update({ embeds: [new EmbedBuilder().setTitle(`🎁 Gift ${chosenAmount.toLocaleString()} V-Bucks`).setDescription("Select who you want to send the V-Bucks to!").setColor(0xffd700).setTimestamp()], components: [giftRow] });
-            const giftCollector = shopMsg.createMessageComponentCollector({ componentType: ComponentType.UserSelect, time: 60000, filter: (b) => b.user.id === userId });
-            giftCollector.on("collect", async (sel) => {
-              giftCollector.stop();
-              const targetId = sel.values[0];
-              if (targetId === userId) { await sel.update({ content: "❌ You can't gift V-Bucks to yourself!", embeds: [], components: [] }); return; }
-              addVbucks(targetId, chosenAmount);
-              purchaseCooldowns.set(`vbucks_${userId}`, Date.now());
-              await sel.update({ embeds: [new EmbedBuilder().setTitle("🎁 V-Bucks Gifted!").setDescription(`You gifted **${chosenAmount.toLocaleString()} V-Bucks** to <@${targetId}>!
-
-🏢 **Employee ID:** \`${correctId}\`
-💳 **Card:** \`6767-6767-****\``).setColor(0xffd700).setTimestamp()], components: [] });
-            });
-            giftCollector.on("end", (_, r) => { if (r === "time") shopMsg.edit({ components: [] }).catch(() => {}); });
-          }
-        });
-        confirmCollector.on("end", (_, r) => { if (r === "time") shopMsg.edit({ components: [] }).catch(() => {}); });
-      });
-      pkgCollector.on("end", (_, r) => { if (r === "time") submitted.editReply({ components: [] }).catch(() => {}); });
     },
   },
 
@@ -3021,6 +2937,24 @@ Select how many V-Bucks you'd like to purchase:`).setColor(0x00d4ff).setTimestam
 
   {
     data: new SlashCommandBuilder()
+      .setName("removemod")
+      .setDescription("Remove a mod's permissions")
+      .addUserOption(o => o.setName("user").setDescription("User to remove as mod").setRequired(true)),
+    async execute(interaction) {
+      if (!isManager(interaction.user.id)) return interaction.reply({ content: "❌ Only the bot manager or a manager can use this.", ephemeral: true });
+      const target = interaction.options.getUser("user", true);
+      if (!isMod(target.id)) return interaction.reply({ content: `❌ <@${target.id}> is not a mod.`, ephemeral: true });
+      _db.mods = (_db.mods || []).filter(id => id !== target.id);
+      save();
+      await interaction.reply({ embeds: [new EmbedBuilder()
+        .setTitle("🛡️ Mod Removed")
+        .setDescription(`<@${target.id}> has been removed as a **bot mod**.\n\nThey can no longer use mod commands.`)
+        .setColor(0xe74c3c).setTimestamp()] });
+    },
+  },
+
+  {
+    data: new SlashCommandBuilder()
       .setName("addmanager")
       .setDescription("Add a manager who can add mods and use all mod commands")
       .addUserOption(o => o.setName("user").setDescription("User to add as manager").setRequired(true)),
@@ -3030,7 +2964,7 @@ Select how many V-Bucks you'd like to purchase:`).setColor(0x00d4ff).setTimestam
       addManager(target.id);
       await interaction.reply({ embeds: [new EmbedBuilder()
         .setTitle("👑 Manager Added")
-        .setDescription(`<@${target.id}> has been added as a **bot manager**.\n\nThey can now use \`/addmod\` and all mod commands (\`/ban\`, \`/hardban\`, \`/tempban\`, \`/unban\`).`)
+        .setDescription(`<@${target.id}> has been added as a **bot manager**.\n\nThey can now use \`/addmod\`, \`/removemod\`, and all mod commands (\`/ban\`, \`/hardban\`, \`/tempban\`, \`/unban\`).`)
         .setColor(0x9b59b6).setTimestamp()] });
     },
   },
