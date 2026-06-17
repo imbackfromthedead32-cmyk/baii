@@ -498,7 +498,7 @@ function banReplyText(banStatus) {
   return "You have been server banned from using this bot, if you wanna use this bot again please invite this bot to a different server.";
 }
 function hasAdminAccess(interaction) {
-  return !!(interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) || isBotAdmin(interaction.user.id));
+  return !!(interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) || isBotAdmin(interaction.user.id) || hasModAccess(interaction.user.id));
 }
 function setCoinflipChallenge(id, data) {
   _db.coinflipChallenges[id] = data;
