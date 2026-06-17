@@ -37,9 +37,16 @@ let _db = {
 };
 
 const guildContext = new AsyncLocalStorage();
+const _userGuildCache = new Map();
 function _userKey(userId) {
   const guildId = guildContext.getStore();
-  return guildId ? `${guildId}:${userId}` : userId;
+  if (guildId) {
+    _userGuildCache.set(userId, guildId);
+    return `${guildId}:${userId}`;
+  }
+  const cached = _userGuildCache.get(userId);
+  if (cached) return `${cached}:${userId}`;
+  return userId;
 }
 
 let _saveTimer = null;
@@ -1893,8 +1900,13 @@ const commands = [
       let desc = `You're supporting **${match.displayName}**! 🙌\n\n**${discountPct}% discount** on the Item Shop!`;
       if (match.freeSkin) desc += `\n\n🎁 **Perk — Free Skin Week!** Get **one FREE skin** from the shop!`;
       if (match.giftSkin) {
-        addSkinToInventory(userId, match.giftSkin.id, match.giftSkin.name);
-        desc += `\n\n🎁 **Gift!** **${match.giftSkin.name}** has been added to your locker!`;
+        const freshUser = getUser(userId);
+        if (freshUser.inventory.includes(match.giftSkin.id)) {
+          desc += `\n\n🎁 **Gift:** You already own **${match.giftSkin.name}** — no duplicate given.`;
+        } else {
+          addSkinToInventory(userId, match.giftSkin.id, match.giftSkin.name);
+          desc += `\n\n🎁 **Gift!** **${match.giftSkin.name}** has been added to your locker!`;
+        }
       }
       await interaction.reply({ embeds: [new EmbedBuilder().setTitle("🎉 Creator Code Applied!").setDescription(desc).setColor(0x00d4ff).setTimestamp()] });
     },
@@ -2966,6 +2978,46 @@ const commands = [
         .setTitle("👑 Manager Added")
         .setDescription(`<@${target.id}> has been added as a **bot manager**.\n\nThey can now use \`/addmod\`, \`/removemod\`, and all mod commands (\`/ban\`, \`/hardban\`, \`/tempban\`, \`/unban\`).`)
         .setColor(0x9b59b6).setTimestamp()] });
+    },
+  },
+
+  {
+    data: new SlashCommandBuilder()
+      .setName("wipedata")
+      .setDescription("Wipe ALL bot data — irreversible!"),
+    async execute(interaction) {
+      if (interaction.user.id !== BOT_MANAGER_ID) return interaction.reply({ content: "❌ Only the bot manager can use this.", ephemeral: true });
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("wipe_confirm").setLabel("⚠️ YES, WIPE EVERYTHING").setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId("wipe_cancel").setLabel("❌ Cancel").setStyle(ButtonStyle.Secondary)
+      );
+      const msg = await interaction.reply({ embeds: [new EmbedBuilder()
+        .setTitle("⚠️ WIPE ALL DATA")
+        .setDescription("This will **permanently delete** ALL users, V-Bucks, inventories, bans, mods, managers, and all other bot data.\n\n**This cannot be undone.**\n\nAre you absolutely sure?")
+        .setColor(0xff0000).setTimestamp()], components: [row], fetchReply: true });
+      const col = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 30000, filter: b => b.user.id === BOT_MANAGER_ID });
+      col.on("collect", async btn => {
+        col.stop();
+        if (btn.customId === "wipe_cancel") {
+          await btn.update({ embeds: [new EmbedBuilder().setTitle("✅ Wipe Cancelled").setDescription("No data was deleted.").setColor(0x00ff00).setTimestamp()], components: [] });
+          return;
+        }
+        _db.users = {};
+        _db.itemShop = { skins: [], lastReset: 0 };
+        _db.pendingGifts = {};
+        _db.bans = {};
+        _db.coinflipChallenges = {};
+        _db.botAdmins = [];
+        _db.mods = [];
+        _db.managers = [];
+        _userGuildCache.clear();
+        save();
+        await btn.update({ embeds: [new EmbedBuilder()
+          .setTitle("🗑️ Data Wiped")
+          .setDescription("All bot data has been permanently deleted.\n\nThe bot is now fresh. Spawn channels and crew codes are preserved.")
+          .setColor(0xff0000).setTimestamp()], components: [] });
+      });
+      col.on("end", (_, r) => { if (r === "time") interaction.editReply({ components: [] }).catch(() => {}); });
     },
   },
 ];
