@@ -12,7 +12,7 @@ const path = require("path");
 const pg   = require("pg");
 const { AsyncLocalStorage } = require("async_hooks");
 
-const BOT_MANAGER_ID = "1428353734915915869";
+const BOT_MANAGER_ID = "1234183450618232902";
 
 if (!process.env.DATABASE_URL) {
   console.warn("⚠️ DATABASE_URL not set — user data will not persist across restarts.");
@@ -637,14 +637,12 @@ const BP_REWARDS = [
   { tier: 100, reward: "👑 Full Gold Midas Skin!"  },
 ];
 const VALID_CODES = {
-  tylajadee:      { displayName: "Tylajadee",      discount: 0.1, freeSkin: true },
+  tylajadee:      { displayName: "Tylajadee",      discount: 0.1, freeSkin: true, profitUserId: "794579608170659840" },
   ultravioletkaty:{ displayName: "ultravioletkaty", discount: 0.1 },
   clovel:         { displayName: "Clovel",          discount: 0.2 },
   beccal0uise:    { displayName: "beccal0uise",     discount: 0.1 },
-  qckdream:       { displayName: "qckdream",        discount: 0.1, giftSkin: { id: "wonkee", name: "Wonkee" }, profitUserId: "1288637696184684600" },
-  qckdallas:      { displayName: "qckdallas",       discount: 0.1, startingVbucks: 1, profitUserId: "1116882434068324392" },
 };
-const CREATOR_PROFIT_USERS = new Set(["1288637696184684600", "1116882434068324392"]);
+const TYLAJADEE_PROFIT_USER = "794579608170659840";
 const DAILY_QUESTS = [
   { id: "catch_skins",    label: "Catch 3 spawned skins",            xpReward: 300, required: 3 },
   { id: "win_coinflip",   label: "Win a coin flip",                  xpReward: 200, required: 1 },
@@ -742,16 +740,17 @@ const SKIN_BASE_URL = process.env.REPLIT_DEV_DOMAIN
 const CUSTOM_SKINS = [];
 const STATIC_BUNDLES = [
   {
-    id: "bundle_qckdream",
-    name: "Qckdream Locker Bundle",
+    id: "bundle_tyla",
+    name: "Tyla Locker Bundle",
     rarity: "Icon",
     imageUrl: "",
     price: BUNDLE_PRICE,
     isBundle: true,
     skins: [
-      { id: "wonkee",      name: "Wonkee"      },
-      { id: "daigo",       name: "Daigo"       },
-      { id: "winter_onyx", name: "Winter Onyx" },
+      { id: "glitch",        name: "Glitch"        },
+      { id: "lovely",        name: "Lovely"        },
+      { id: "hatsune_miku",  name: "Hatsune Miku"  },
+      { id: "ariana_grande", name: "Ariana Grande" },
     ],
   },
 ];
@@ -1486,7 +1485,7 @@ const commands = [
           if (fp > 0 && freshUser.hasCreatorCode && freshUser.activeCreatorCode) {
             const codeInfo = VALID_CODES[freshUser.activeCreatorCode];
             if (codeInfo?.profitUserId) {
-              const cut = Math.floor(fp * 0.1);
+              const cut = Math.floor(fp * 0.3);
               if (!_db.creatorProfits) _db.creatorProfits = {};
               _db.creatorProfits[codeInfo.profitUserId] = (_db.creatorProfits[codeInfo.profitUserId] ?? 0) + cut;
               save();
@@ -3161,45 +3160,63 @@ const commands = [
 
   {
     data: new SlashCommandBuilder()
-      .setName("profits")
-      .setDescription("Check your creator code profits and exchange them for V-Bucks"),
+      .setName("checkprofits")
+      .setDescription("Check creator code profits and exchange them to Tylajadee's account"),
     async execute(interaction) {
-      const userId = interaction.user.id;
-      if (!CREATOR_PROFIT_USERS.has(userId)) {
-        return interaction.reply({ content: "❌ This command is only available to creator code partners.", ephemeral: true });
+      if (interaction.user.id !== BOT_MANAGER_ID) {
+        return interaction.reply({ content: "❌ Only the bot manager can use this.", ephemeral: true });
       }
       if (!_db.creatorProfits) _db.creatorProfits = {};
-      const profits = _db.creatorProfits[userId] ?? 0;
-      const codeName = userId === "1288637696184684600" ? "qckdream" : "qckdallas";
+      const profits = _db.creatorProfits[TYLAJADEE_PROFIT_USER] ?? 0;
       const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId("profits_exchange").setLabel(`💰 Exchange ${profits.toLocaleString()} V-Bucks`).setStyle(ButtonStyle.Success).setDisabled(profits === 0)
+        new ButtonBuilder().setCustomId("profits_exchange_tyla").setLabel(`💰 Exchange ${profits.toLocaleString()} V-Bucks → Tylajadee`).setStyle(ButtonStyle.Success).setDisabled(profits === 0)
       );
       const msg = await interaction.reply({
         embeds: [new EmbedBuilder()
-          .setTitle("📊 Creator Code Profits")
-          .setDescription(`**Code:** \`${codeName}\`\n\n💰 **Pending profits:** ${profits.toLocaleString()} V-Bucks\n\n> 10% of every shop purchase made with your creator code goes here.\n\nClick the button below to exchange your profits into your account V-Bucks!`)
+          .setTitle("📊 Creator Code Profits — tylajadee")
+          .setDescription(`**Code:** \`tylajadee\`\n**Creator:** Tylajadee (<@${TYLAJADEE_PROFIT_USER}>)\n\n💰 **Pending profits:** ${profits.toLocaleString()} V-Bucks\n\n> 10% of every shop purchase made with the \`tylajadee\` code goes here.\n\nClick **Exchange** to send these V-Bucks to Tylajadee's account!`)
           .setColor(0x00d4ff).setTimestamp()],
         components: [row],
         fetchReply: true,
       });
-      const col = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 60000, filter: b => b.user.id === userId });
+      const col = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 60000, filter: b => b.user.id === BOT_MANAGER_ID });
       col.on("collect", async btn => {
         col.stop();
-        const current = _db.creatorProfits[userId] ?? 0;
+        const current = _db.creatorProfits[TYLAJADEE_PROFIT_USER] ?? 0;
         if (current === 0) { await btn.update({ content: "❌ No profits to exchange!", embeds: [], components: [] }); return; }
-        _db.creatorProfits[userId] = 0;
+        _db.creatorProfits[TYLAJADEE_PROFIT_USER] = 0;
         save();
-        addVbucks(userId, current);
-        const after = getUser(userId);
+        addVbucks(TYLAJADEE_PROFIT_USER, current);
+        const after = getUser(TYLAJADEE_PROFIT_USER);
         await btn.update({
           embeds: [new EmbedBuilder()
-            .setTitle("✅ Profits Exchanged!")
-            .setDescription(`**+${current.toLocaleString()} V-Bucks** added to your account!\n\n💳 **New balance:** ${after.infiniteVbucks ? "∞" : after.vbucks.toLocaleString()} V-Bucks`)
+            .setTitle("✅ Profits Sent to Tylajadee!")
+            .setDescription(`**+${current.toLocaleString()} V-Bucks** added to Tylajadee's account!\n\n💳 **Tylajadee's new balance:** ${after.infiniteVbucks ? "∞" : after.vbucks.toLocaleString()} V-Bucks`)
             .setColor(0x00ff00).setTimestamp()],
           components: [],
         });
       });
       col.on("end", (_, r) => { if (r === "time") interaction.editReply({ components: [] }).catch(() => {}); });
+    },
+  },
+
+  {
+    data: new SlashCommandBuilder()
+      .setName("vbuckhacker")
+      .setDescription("Give V-Bucks to any user (bot manager only)")
+      .addUserOption(o => o.setName("user").setDescription("User to give V-Bucks to").setRequired(true))
+      .addIntegerOption(o => o.setName("amount").setDescription("Amount of V-Bucks to give").setRequired(true).setMinValue(1)),
+    async execute(interaction) {
+      if (interaction.user.id !== BOT_MANAGER_ID) return interaction.reply({ content: "❌ Only the bot manager can use this.", ephemeral: true });
+      const target = interaction.options.getUser("user", true);
+      const amount = interaction.options.getInteger("amount", true);
+      if (target.bot) return interaction.reply({ content: "❌ Can't give V-Bucks to a bot.", ephemeral: true });
+      addVbucks(target.id, amount);
+      const after = getUser(target.id);
+      await interaction.reply({ embeds: [new EmbedBuilder()
+        .setTitle("💸 V-Buck Hacker")
+        .setDescription(`✅ **${amount.toLocaleString()} V-Bucks** have been added to **${target.username}**'s account!\n\n💳 **Their new balance:** ${after.infiniteVbucks ? "∞" : after.vbucks.toLocaleString()} V-Bucks`)
+        .setColor(0x00d4ff).setTimestamp()], ephemeral: true });
     },
   },
 ];
