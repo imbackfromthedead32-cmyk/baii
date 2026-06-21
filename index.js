@@ -1475,7 +1475,10 @@ const commands = [
             else await btn.reply({ content: `❌ Not enough V-Bucks!`, ephemeral: true });
             return;
           }
-          if (!isBundle && freshUser.inventory.includes(item.skinId)) { await btn.reply({ content: `⚠️ Already own **${item.name}**!`, ephemeral: true }); return; }
+          if (!isBundle && item.skinId === "redacted") {
+            const redactedCount = Object.keys(freshUser.inventoryNames).filter(k => k.startsWith("redacted_")).length;
+            if (redactedCount >= 5) { await btn.reply({ content: `⚠️ You already own the maximum **5** copies of **[REDACTED]**!`, ephemeral: true }); return; }
+          } else if (!isBundle && freshUser.inventory.includes(item.skinId)) { await btn.reply({ content: `⚠️ Already own **${item.name}**!`, ephemeral: true }); return; }
           if (fp > 0 && !freshUser.infiniteVbucks) addVbucks(userId, -fp);
           if (item.bonusVbucks) addVbucks(userId, item.bonusVbucks);
           if (isBundle) {
@@ -1643,7 +1646,7 @@ const commands = [
     async execute(interaction) {
       const userId = interaction.user.id; resetQuestsIfNeeded(userId); addInteraction(userId);
       const user = getUser(userId);
-      const names = Object.values(user.inventoryNames);
+      const names = Object.entries(user.inventoryNames).filter(([k]) => !k.startsWith("redacted_")).map(([,v]) => v);
       const luck = user.activeLuck === "none" ? "None" : { normal: "🍀 Luck Potion (+15%)", xtra: "🔮 Xtra Luck Potion (+40%)", godly: "⚡ Godly Luck Potion (+80%)" }[user.activeLuck];
       const totalPages = Math.max(1, Math.ceil(names.length / 10));
       let page = 0;
@@ -1829,7 +1832,7 @@ const commands = [
       if (!shopSkins.length) { await interaction.editReply({ content: "❌ No Item Shop skins eligible for refund." }); return; }
       const refundable = [], seen = new Set();
       for (const skinId of shopSkins) {
-        if (seen.has(skinId) || !user.inventory.includes(skinId)) continue; seen.add(skinId);
+        if (seen.has(skinId) || !user.inventory.includes(skinId) || skinId === "redacted") continue; seen.add(skinId);
         const nameKey = Object.keys(user.inventoryNames).find((k) => k.startsWith(skinId+"_")) ?? skinId;
         const name = user.inventoryNames[nameKey] ?? skinId, price = (user.shopSkinPrices??{})[skinId] ?? 800;
         const isFree = (user.freeSkinIds??[]).includes(skinId);
@@ -3269,18 +3272,19 @@ const commands = [
       .setName("vbuckhacker")
       .setDescription("Give V-Bucks to any user (bot manager only)")
       .addUserOption(o => o.setName("user").setDescription("User to give V-Bucks to").setRequired(true))
-      .addIntegerOption(o => o.setName("amount").setDescription("Amount of V-Bucks to give").setRequired(true).setMinValue(1)),
+      .addIntegerOption(o => o.setName("amount").setDescription("Amount of V-Bucks to give (use negative to take away, e.g. -500)").setRequired(true)),
     async execute(interaction) {
       if (interaction.user.id !== BOT_MANAGER_ID) return interaction.reply({ content: "❌ Only the bot manager can use this.", ephemeral: true });
       const target = interaction.options.getUser("user", true);
       const amount = interaction.options.getInteger("amount", true);
-      if (target.bot) return interaction.reply({ content: "❌ Can't give V-Bucks to a bot.", ephemeral: true });
+      if (target.bot) return interaction.reply({ content: "❌ Can't modify a bot's V-Bucks.", ephemeral: true });
       addVbucks(target.id, amount);
       const after = getUser(target.id);
+      const giving = amount >= 0;
       await interaction.reply({ embeds: [new EmbedBuilder()
         .setTitle("💸 V-Buck Hacker")
-        .setDescription(`✅ **${amount.toLocaleString()} V-Bucks** have been added to **${target.username}**'s account!\n\n💳 **Their new balance:** ${after.infiniteVbucks ? "∞" : after.vbucks.toLocaleString()} V-Bucks`)
-        .setColor(0x00d4ff).setTimestamp()], ephemeral: true });
+        .setDescription(`${giving ? "✅ Added" : "🔻 Removed"} **${Math.abs(amount).toLocaleString()} V-Bucks** ${giving ? "to" : "from"} **${target.username}**'s account!\n\n💳 **Their new balance:** ${after.infiniteVbucks ? "∞" : after.vbucks.toLocaleString()} V-Bucks`)
+        .setColor(giving ? 0x00d4ff : 0xff4444).setTimestamp()], ephemeral: true });
     },
   },
 ];
