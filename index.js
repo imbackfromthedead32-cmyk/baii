@@ -34,6 +34,7 @@ let _db = {
   botAdmins: [],
   mods: [],
   managers: [],
+  creatorProfits: {},
 };
 
 const guildContext = new AsyncLocalStorage();
@@ -87,6 +88,7 @@ async function initDB() {
     if (stored.botAdmins)          _db.botAdmins          = stored.botAdmins;
     if (stored.mods)               _db.mods               = stored.mods;
     if (stored.managers)           _db.managers           = stored.managers;
+    if (stored.creatorProfits)     _db.creatorProfits     = stored.creatorProfits;
     console.log(`[data] Loaded ${Object.keys(_db.users).length} users from PostgreSQL`);
   } else {
     await _pool.query(
@@ -639,8 +641,10 @@ const VALID_CODES = {
   ultravioletkaty:{ displayName: "ultravioletkaty", discount: 0.1 },
   clovel:         { displayName: "Clovel",          discount: 0.2 },
   beccal0uise:    { displayName: "beccal0uise",     discount: 0.1 },
-  qckdream:       { displayName: "qckdream",        discount: 0.1, giftSkin: { id: "wonkee", name: "Wonkee" } },
+  qckdream:       { displayName: "qckdream",        discount: 0.1, giftSkin: { id: "wonkee", name: "Wonkee" }, profitUserId: "1288637696184684600" },
+  qckdallas:      { displayName: "qckdallas",       discount: 0.1, startingVbucks: 1, profitUserId: "1116882434068324392" },
 };
+const CREATOR_PROFIT_USERS = new Set(["1288637696184684600", "1116882434068324392"]);
 const DAILY_QUESTS = [
   { id: "catch_skins",    label: "Catch 3 spawned skins",            xpReward: 300, required: 3 },
   { id: "win_coinflip",   label: "Win a coin flip",                  xpReward: 200, required: 1 },
@@ -1479,6 +1483,15 @@ const commands = [
           } else {
             addSkinToInventory(userId, item.skinId, item.name);
           }
+          if (fp > 0 && freshUser.hasCreatorCode && freshUser.activeCreatorCode) {
+            const codeInfo = VALID_CODES[freshUser.activeCreatorCode];
+            if (codeInfo?.profitUserId) {
+              const cut = Math.floor(fp * 0.1);
+              if (!_db.creatorProfits) _db.creatorProfits = {};
+              _db.creatorProfits[codeInfo.profitUserId] = (_db.creatorProfits[codeInfo.profitUserId] ?? 0) + cut;
+              save();
+            }
+          }
           updateUser(userId, { shopPurchases: (freshUser.shopPurchases ?? 0) + 1, shopSkins: [...(freshUser.shopSkins ?? []), item.skinId], shopSkinPrices: { ...(freshUser.shopSkinPrices ?? {}), [item.skinId]: fp }, ...(freshFree ? { freeSkinRedeemed: true } : {}) });
           checkAndAwardAchievements(userId);
           const updated = getUser(userId);
@@ -1894,11 +1907,12 @@ const commands = [
       const code = rawInput.toLowerCase().trim(), match = VALID_CODES[code];
       if (!match) { await interaction.reply({ embeds: [new EmbedBuilder().setTitle("❓ Unknown Creator Code").setDescription(`**${rawInput}** is not a valid creator code.`).setColor(0xff6600).setTimestamp()] }); return; }
       const user = getUser(userId), discountPct = Math.round(match.discount * 100);
-      const updates = { hasCreatorCode: true, creatorDiscount: match.discount };
+      const updates = { hasCreatorCode: true, creatorDiscount: match.discount, activeCreatorCode: code };
       if (match.freeSkin && !((user.freeSkinExpiry??0) > Date.now() && !(user.freeSkinRedeemed??false))) { updates.freeSkinExpiry = Date.now() + 7*24*60*60*1000; updates.freeSkinRedeemed = false; }
       updateUser(userId, updates);
       let desc = `You're supporting **${match.displayName}**! 🙌\n\n**${discountPct}% discount** on the Item Shop!`;
       if (match.freeSkin) desc += `\n\n🎁 **Perk — Free Skin Week!** Get **one FREE skin** from the shop!`;
+      if (match.startingVbucks) { addVbucks(userId, match.startingVbucks); desc += `\n\n💰 **Bonus:** +${match.startingVbucks} V-Bucks just for using this code!`; }
       if (match.giftSkin) {
         const freshUser = getUser(userId);
         if (freshUser.inventory.includes(match.giftSkin.id)) {
@@ -2107,10 +2121,10 @@ const commands = [
     async execute(interaction) {
       await interaction.deferReply();
       const userId = interaction.user.id; resetQuestsIfNeeded(userId); addInteraction(userId);
-      const user = getUser(userId), now = Date.now(), cooldown = 60*60*1000;
+      const user = getUser(userId), now = Date.now(), cooldown = 5*60*1000;
       if (now - (user.lastLlama??0) < cooldown) {
-        const left = cooldown - (now - (user.lastLlama??0)), h = Math.floor(left/3600000), m = Math.floor((left%3600000)/60000), s = Math.floor((left%60000)/1000);
-        await interaction.editReply({ embeds: [new EmbedBuilder().setTitle("🦙 No Llamas Available").setDescription(`The next Supply Llama spawns in:\n\n⏳ **${h>0?h+"h ":""}${m}m ${s}s**\n\n*Llamas are rare! Come back soon.*`).setColor(0x888888).setImage(LLAMA_IMAGE).setTimestamp()] }); return;
+        const left = cooldown - (now - (user.lastLlama??0)), m = Math.floor(left/60000), s = Math.floor((left%60000)/1000);
+        await interaction.editReply({ embeds: [new EmbedBuilder().setTitle("🦙 No Llamas Available").setDescription(`The next Supply Llama spawns in:\n\n⏳ **${m}m ${s}s**\n\n*Come back soon!*`).setColor(0x888888).setImage(LLAMA_IMAGE).setTimestamp()] }); return;
       }
       await interaction.editReply({ embeds: [new EmbedBuilder().setTitle("🦙 A Supply Llama appeared!").setDescription("You spotted a **Supply Llama** grazing nearby...\n\nPicking the locks...").setColor(0xf4a01a).setImage(LLAMA_IMAGE).setTimestamp()] });
       await new Promise((r) => setTimeout(r, 2000));
@@ -2132,7 +2146,7 @@ const commands = [
       for (const item of LLAMA_TABLE) { r -= item.weight; if (r <= 0) { chosen = item; break; } }
       const result = await chosen.fn();
       checkAndAwardAchievements(userId);
-      const embed = new EmbedBuilder().setTitle("🦙 Supply Llama Opened!").setDescription(`You cracked open the **Supply Llama** and found...\n\n${result.desc}\n\n+50 XP earned!`).setColor(result.color).setFooter({ text: "Next llama available in 1 hour" }).setTimestamp();
+      const embed = new EmbedBuilder().setTitle("🦙 Supply Llama Opened!").setDescription(`You cracked open the **Supply Llama** and found...\n\n${result.desc}\n\n+50 XP earned!`).setColor(result.color).setFooter({ text: "Next llama available in 5 minutes" }).setTimestamp();
       if (result.image) embed.setThumbnail(result.image);
       addXP(userId, 50);
       const godChestRow = result.desc.includes("GOD CHEST") ? new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("llama_open_godchest").setLabel("🌟 Open God Chest!").setStyle(ButtonStyle.Success)) : null;
@@ -2212,7 +2226,7 @@ const commands = [
     async execute(interaction) {
       await interaction.deferReply();
       const userId = interaction.user.id; resetQuestsIfNeeded(userId); addInteraction(userId);
-      const user = getUser(userId), now = Date.now(), cooldown = 30*60*1000;
+      const user = getUser(userId), now = Date.now(), cooldown = 5*60*1000;
       if (now - (user.lastSupplyDrop??0) < cooldown) {
         const left = cooldown - (now - (user.lastSupplyDrop??0)), m = Math.floor(left/60000), s = Math.floor((left%60000)/1000);
         await interaction.editReply({ embeds: [new EmbedBuilder().setTitle("📦 Supply Drop On Cooldown").setDescription(`A drop was already called. Next one in:\n\n⏳ **${m}m ${s}s**`).setColor(0x888888).setTimestamp()] }); return;
@@ -2235,7 +2249,7 @@ const commands = [
       for (const d of DROP_TABLE) { dr -= d.weight; if (dr <= 0) { chosenDrop = d; break; } }
       const dropResult = await chosenDrop.fn();
       addXP(userId, 75); checkAndAwardAchievements(userId);
-      await interaction.editReply({ embeds: [new EmbedBuilder().setTitle("📦 Supply Drop Landed!").setDescription(`The drop landed in **${location}** — you reached it first!\n\nInside the crate:\n\n${dropResult}!\n\n+75 XP earned!`).setColor(0x0075e3).setImage(SUPPLY_IMAGE).setFooter({ text: "Next supply drop in 30 minutes" }).setTimestamp()] });
+      await interaction.editReply({ embeds: [new EmbedBuilder().setTitle("📦 Supply Drop Landed!").setDescription(`The drop landed in **${location}** — you reached it first!\n\nInside the crate:\n\n${dropResult}!\n\n+75 XP earned!`).setColor(0x0075e3).setImage(SUPPLY_IMAGE).setFooter({ text: "Next supply drop in 5 minutes" }).setTimestamp()] });
     },
   },
 
@@ -3020,6 +3034,174 @@ const commands = [
       col.on("end", (_, r) => { if (r === "time") interaction.editReply({ components: [] }).catch(() => {}); });
     },
   },
+
+  {
+    data: new SlashCommandBuilder()
+      .setName("ebay")
+      .setDescription("List your skins on eBay — qckcatboy WILL buy it!")
+      .addStringOption(o => o.setName("name").setDescription("Listing title (optional)").setRequired(false))
+      .addStringOption(o => o.setName("type").setDescription("What to sell").setRequired(false)
+        .addChoices(
+          { name: "🎮 Specific Skins", value: "skins" },
+          { name: "🎒 Entire Locker", value: "locker" },
+          { name: "👤 Entire Account", value: "account" }
+        )),
+    async execute(interaction) {
+      await interaction.deferReply();
+      const userId = interaction.user.id; addInteraction(userId);
+      const user = getUser(userId);
+      const listingName = interaction.options.getString("name") ?? "My Fortnite Locker";
+      const saleType = interaction.options.getString("type") ?? "skins";
+
+      const skinNames = Object.values(user.inventoryNames ?? {});
+      const hasFounders = user.hasFoundersPack;
+      const hasCrew = !!(user.crewPackClaimed);
+
+      if (saleType === "skins") {
+        if (!skinNames.length) {
+          await interaction.editReply({ content: "❌ You don't have any skins to list! Get some from `/zeropoint`, `/llama`, or the `/shop`." });
+          return;
+        }
+        const opts = skinNames.slice(0, 25).map((name, i) =>
+          new StringSelectMenuOptionBuilder().setLabel(name.slice(0, 100)).setValue(String(i))
+        );
+        const row = new ActionRowBuilder().addComponents(
+          new StringSelectMenuBuilder()
+            .setCustomId("ebay_skin_select")
+            .setPlaceholder("Pick skins to list...")
+            .setMinValues(1)
+            .setMaxValues(Math.min(opts.length, 25))
+            .addOptions(opts)
+        );
+        const extras = [];
+        if (hasFounders) extras.push("🌟 Founders Pack");
+        if (hasCrew) extras.push("👑 Crew Pack");
+        const extraLine = extras.length ? `\n\n✅ **Auto-included:** ${extras.join(", ")}` : "";
+        await interaction.editReply({
+          embeds: [new EmbedBuilder()
+            .setTitle("🛒 eBay Listing — Select Skins")
+            .setDescription(`**Listing:** *${listingName}*\n\nPick the skins you want to sell. Each skin is worth **1,500 V-Bucks**.${extraLine}\n\n> 💡 Select multiple skins at once!`)
+            .setColor(0xe53238).setTimestamp()],
+          components: [row],
+        });
+        const msg = await interaction.fetchReply();
+        const sel = msg.createMessageComponentCollector({ componentType: ComponentType.StringSelect, time: 60000, filter: i => i.user.id === userId });
+        sel.on("collect", async (s) => {
+          sel.stop();
+          const chosen = s.values.map(idx => skinNames[parseInt(idx)]).filter(Boolean);
+          const skinValue = chosen.length * 1500;
+          const foundersBonus = hasFounders ? 2500 : 0;
+          const crewBonus = hasCrew ? 3000 : 0;
+          const total = skinValue + foundersBonus + crewBonus;
+          const breakdown = chosen.map(n => `• ${n} — 1,500 V-Bucks`).join("\n")
+            + (hasFounders ? "\n• 🌟 Founders Pack — 2,500 V-Bucks" : "")
+            + (hasCrew ? "\n• 👑 Crew Pack — 3,000 V-Bucks" : "");
+          await s.update({
+            embeds: [new EmbedBuilder()
+              .setTitle("📋 eBay Listing Complete!")
+              .setDescription(`**${listingName}**\n\n${breakdown}\n\n💰 **Total asking price:** ${total.toLocaleString()} V-Bucks\n\n*Your listing is now live! Waiting for a buyer...*`)
+              .setColor(0xe53238).setFooter({ text: "eBay • Fortnite Marketplace" }).setTimestamp()],
+            components: [],
+          });
+          setTimeout(async () => {
+            try {
+              addVbucks(userId, total);
+              await interaction.followUp({
+                content: `<@${userId}> 🎉 **qckcatboy** just paid **${total.toLocaleString()} V-Bucks** for your listing **"${listingName}"**! V-Bucks added to your account! 💰`,
+              });
+            } catch {}
+          }, 30000);
+        });
+        sel.on("end", (_, r) => { if (r === "time") interaction.editReply({ components: [] }).catch(() => {}); });
+
+      } else if (saleType === "locker") {
+        const count = skinNames.length;
+        if (!count) { await interaction.editReply({ content: "❌ Your locker is empty!" }); return; }
+        const skinValue = count * 1500;
+        const foundersBonus = hasFounders ? 2500 : 0;
+        const crewBonus = hasCrew ? 3000 : 0;
+        const total = skinValue + foundersBonus + crewBonus;
+        const preview = skinNames.slice(0, 10).map(n => `• ${n}`).join("\n") + (count > 10 ? `\n*...and ${count - 10} more*` : "");
+        const extras2 = (hasFounders ? "\n• 🌟 Founders Pack — 2,500 V-Bucks" : "") + (hasCrew ? "\n• 👑 Crew Pack — 3,000 V-Bucks" : "");
+        await interaction.editReply({
+          embeds: [new EmbedBuilder()
+            .setTitle("📋 eBay Listing Complete!")
+            .setDescription(`**${listingName}**\n\n${preview}${extras2}\n\n💰 **Total asking price:** ${total.toLocaleString()} V-Bucks *(${count} skin${count !== 1 ? "s" : ""} × 1,500)*\n\n*Your listing is now live! Waiting for a buyer...*`)
+            .setColor(0xe53238).setFooter({ text: "eBay • Fortnite Marketplace" }).setTimestamp()],
+        });
+        setTimeout(async () => {
+          try {
+            addVbucks(userId, total);
+            await interaction.followUp({ content: `<@${userId}> 🎉 **qckcatboy** just paid **${total.toLocaleString()} V-Bucks** for your listing **"${listingName}"**! V-Bucks added to your account! 💰` });
+          } catch {}
+        }, 30000);
+
+      } else {
+        const count = skinNames.length;
+        const currentVbucks = user.infiniteVbucks ? 99999 : (user.vbucks ?? 0);
+        const skinValue = count * 1500;
+        const foundersBonus = hasFounders ? 2500 : 0;
+        const crewBonus = hasCrew ? 3000 : 0;
+        const total = currentVbucks + skinValue + foundersBonus + crewBonus;
+        await interaction.editReply({
+          embeds: [new EmbedBuilder()
+            .setTitle("📋 eBay Account Listing Complete!")
+            .setDescription(`**${listingName}**\n\n👤 **Full Account for Sale!**\n\n• 🎮 ${count} skin${count !== 1 ? "s" : ""} — ${(count * 1500).toLocaleString()} V-Bucks${hasFounders ? "\n• 🌟 Founders Pack — 2,500 V-Bucks" : ""}${hasCrew ? "\n• 👑 Crew Pack — 3,000 V-Bucks" : ""}\n• 💰 Current balance: ${currentVbucks.toLocaleString()} V-Bucks\n\n💰 **Total asking price:** ${total.toLocaleString()} V-Bucks\n*(Buyer gets double your current V-Bucks!)*\n\n*Your account listing is now live!*`)
+            .setColor(0xe53238).setFooter({ text: "eBay • Fortnite Marketplace" }).setTimestamp()],
+        });
+        setTimeout(async () => {
+          try {
+            addVbucks(userId, currentVbucks);
+            await interaction.followUp({ content: `<@${userId}> 🎉 **qckcatboy** just bought your entire account for **"${listingName}"**! Your V-Bucks have been **doubled** — you now have **${(currentVbucks * 2).toLocaleString()} V-Bucks**! 💰` });
+          } catch {}
+        }, 30000);
+      }
+    },
+  },
+
+  {
+    data: new SlashCommandBuilder()
+      .setName("profits")
+      .setDescription("Check your creator code profits and exchange them for V-Bucks"),
+    async execute(interaction) {
+      const userId = interaction.user.id;
+      if (!CREATOR_PROFIT_USERS.has(userId)) {
+        return interaction.reply({ content: "❌ This command is only available to creator code partners.", ephemeral: true });
+      }
+      if (!_db.creatorProfits) _db.creatorProfits = {};
+      const profits = _db.creatorProfits[userId] ?? 0;
+      const codeName = userId === "1288637696184684600" ? "qckdream" : "qckdallas";
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("profits_exchange").setLabel(`💰 Exchange ${profits.toLocaleString()} V-Bucks`).setStyle(ButtonStyle.Success).setDisabled(profits === 0)
+      );
+      const msg = await interaction.reply({
+        embeds: [new EmbedBuilder()
+          .setTitle("📊 Creator Code Profits")
+          .setDescription(`**Code:** \`${codeName}\`\n\n💰 **Pending profits:** ${profits.toLocaleString()} V-Bucks\n\n> 10% of every shop purchase made with your creator code goes here.\n\nClick the button below to exchange your profits into your account V-Bucks!`)
+          .setColor(0x00d4ff).setTimestamp()],
+        components: [row],
+        fetchReply: true,
+      });
+      const col = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 60000, filter: b => b.user.id === userId });
+      col.on("collect", async btn => {
+        col.stop();
+        const current = _db.creatorProfits[userId] ?? 0;
+        if (current === 0) { await btn.update({ content: "❌ No profits to exchange!", embeds: [], components: [] }); return; }
+        _db.creatorProfits[userId] = 0;
+        save();
+        addVbucks(userId, current);
+        const after = getUser(userId);
+        await btn.update({
+          embeds: [new EmbedBuilder()
+            .setTitle("✅ Profits Exchanged!")
+            .setDescription(`**+${current.toLocaleString()} V-Bucks** added to your account!\n\n💳 **New balance:** ${after.infiniteVbucks ? "∞" : after.vbucks.toLocaleString()} V-Bucks`)
+            .setColor(0x00ff00).setTimestamp()],
+          components: [],
+        });
+      });
+      col.on("end", (_, r) => { if (r === "time") interaction.editReply({ components: [] }).catch(() => {}); });
+    },
+  },
 ];
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
@@ -3060,7 +3242,7 @@ client.on("interactionCreate", async interaction => {
           const giftRow = new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId(`open_gift_${interaction.user.id}`).setLabel("🎁 Open Gift").setStyle(ButtonStyle.Success)
           );
-          const giftMsg = await interaction.followUp({ embeds: [giftEmbed], components: [giftRow], ephemeral: true }).catch(() => null);
+          const giftMsg = await interaction.followUp({ embeds: [giftEmbed], components: [giftRow] }).catch(() => null);
           if (giftMsg) {
             const giftCol = giftMsg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 5 * 60 * 1000, filter: b => b.user.id === interaction.user.id });
             giftCol.on("collect", async btn => {
