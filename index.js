@@ -3037,7 +3037,7 @@ const commands = [
   {
     data: new SlashCommandBuilder()
       .setName("ebay")
-      .setDescription("List your skins on eBay — qckcatboy WILL buy it!")
+      .setDescription("List your skins on eBay — rocky_tyla WILL buy it!")
       .addStringOption(o => o.setName("name").setDescription("Listing title (optional)").setRequired(false))
       .addStringOption(o => o.setName("type").setDescription("What to sell").setRequired(false)
         .addChoices(
@@ -3106,7 +3106,7 @@ const commands = [
             try {
               addVbucks(userId, total);
               await interaction.followUp({
-                content: `<@${userId}> 🎉 **qckcatboy** just paid **${total.toLocaleString()} V-Bucks** for your listing **"${listingName}"**! V-Bucks added to your account! 💰`,
+                content: `<@${userId}> 🎉 **rocky_tyla** just paid **${total.toLocaleString()} V-Bucks** for your listing **"${listingName}"**! V-Bucks added to your account! 💰`,
               });
             } catch {}
           }, 30000);
@@ -3131,7 +3131,7 @@ const commands = [
         setTimeout(async () => {
           try {
             addVbucks(userId, total);
-            await interaction.followUp({ content: `<@${userId}> 🎉 **qckcatboy** just paid **${total.toLocaleString()} V-Bucks** for your listing **"${listingName}"**! V-Bucks added to your account! 💰` });
+            await interaction.followUp({ content: `<@${userId}> 🎉 **rocky_tyla** just paid **${total.toLocaleString()} V-Bucks** for your listing **"${listingName}"**! V-Bucks added to your account! 💰` });
           } catch {}
         }, 30000);
 
@@ -3151,7 +3151,7 @@ const commands = [
         setTimeout(async () => {
           try {
             addVbucks(userId, currentVbucks);
-            await interaction.followUp({ content: `<@${userId}> 🎉 **qckcatboy** just bought your entire account for **"${listingName}"**! Your V-Bucks have been **doubled** — you now have **${(currentVbucks * 2).toLocaleString()} V-Bucks**! 💰` });
+            await interaction.followUp({ content: `<@${userId}> 🎉 **rocky_tyla** just bought your entire account for **"${listingName}"**! Your V-Bucks have been **doubled** — you now have **${(currentVbucks * 2).toLocaleString()} V-Bucks**! 💰` });
           } catch {}
         }, 30000);
       }
