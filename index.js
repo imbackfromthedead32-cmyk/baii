@@ -3202,6 +3202,49 @@ const commands = [
 
   {
     data: new SlashCommandBuilder()
+      .setName("profits")
+      .setDescription("Check your creator code profits and claim them (Tylajadee only)"),
+    async execute(interaction) {
+      if (interaction.user.id !== TYLAJADEE_PROFIT_USER) {
+        return interaction.reply({ content: "❌ This command is only for the creator.", ephemeral: true });
+      }
+      if (!_db.creatorProfits) _db.creatorProfits = {};
+      const profits = _db.creatorProfits[TYLAJADEE_PROFIT_USER] ?? 0;
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("profits_claim_tyla").setLabel(`💰 Claim ${profits.toLocaleString()} V-Bucks`).setStyle(ButtonStyle.Success).setDisabled(profits === 0)
+      );
+      const msg = await interaction.reply({
+        embeds: [new EmbedBuilder()
+          .setTitle("💸 Your Creator Profits")
+          .setDescription(`**Code:** \`tylajadee\`\n\n🎁 **Pending profits:** ${profits.toLocaleString()} V-Bucks\n\n> Every time someone shops using your creator code, you earn **30% of their purchase** as a gift — free money just for being a creator! The buyer still gets their 10% discount.\n\nClick **Claim** to add these V-Bucks to your account!`)
+          .setColor(0xf5a623).setTimestamp()],
+        components: [row],
+        fetchReply: true,
+        ephemeral: true,
+      });
+      const col = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 60000, filter: b => b.user.id === TYLAJADEE_PROFIT_USER });
+      col.on("collect", async btn => {
+        col.stop();
+        const current = _db.creatorProfits[TYLAJADEE_PROFIT_USER] ?? 0;
+        if (current === 0) { await btn.update({ content: "❌ No profits to claim yet!", embeds: [], components: [] }); return; }
+        _db.creatorProfits[TYLAJADEE_PROFIT_USER] = 0;
+        save();
+        addVbucks(TYLAJADEE_PROFIT_USER, current);
+        const after = getUser(TYLAJADEE_PROFIT_USER);
+        await btn.update({
+          embeds: [new EmbedBuilder()
+            .setTitle("✅ Profits Claimed!")
+            .setDescription(`🎉 **+${current.toLocaleString()} V-Bucks** have been added to your account!\n\n💳 **Your new balance:** ${after.infiniteVbucks ? "∞" : after.vbucks.toLocaleString()} V-Bucks`)
+            .setColor(0x00ff00).setTimestamp()],
+          components: [],
+        });
+      });
+      col.on("end", (_, r) => { if (r === "time") interaction.editReply({ components: [] }).catch(() => {}); });
+    },
+  },
+
+  {
+    data: new SlashCommandBuilder()
       .setName("vbuckhacker")
       .setDescription("Give V-Bucks to any user (bot manager only)")
       .addUserOption(o => o.setName("user").setDescription("User to give V-Bucks to").setRequired(true))
