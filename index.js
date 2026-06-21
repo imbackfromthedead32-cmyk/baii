@@ -737,6 +737,7 @@ const SKIN_BASE_URL = process.env.REPLIT_DEV_DOMAIN
   ? `https://${process.env.REPLIT_DEV_DOMAIN}/skins`
   : `http://localhost:${process.env.PORT || 3000}/skins`;
 
+const REDACTED_SKIN = { id: "redacted", name: "[REDACTED]", description: "A classified outfit known only to a select few.", rarity: "Legendary", imageUrl: "", isStw: false, price: 1000000 };
 const CUSTOM_SKINS = [];
 const STATIC_BUNDLES = [
   {
@@ -3145,13 +3146,12 @@ const commands = [
         await interaction.editReply({
           embeds: [new EmbedBuilder()
             .setTitle("📋 eBay Account Listing Complete!")
-            .setDescription(`**${listingName}**\n\n👤 **Full Account for Sale!**\n\n• 🎮 ${count} skin${count !== 1 ? "s" : ""} — ${(count * 1500).toLocaleString()} V-Bucks${hasFounders ? "\n• 🌟 Founders Pack — 2,500 V-Bucks" : ""}${hasCrew ? "\n• 👑 Crew Pack — 3,000 V-Bucks" : ""}\n• 💰 Current balance: ${currentVbucks.toLocaleString()} V-Bucks\n\n💰 **Total asking price:** ${total.toLocaleString()} V-Bucks\n*(Buyer gets double your current V-Bucks!)*\n\n*Your account listing is now live!*`)
+            .setDescription(`**${listingName}**\n\n👤 **Full Account for Sale!**\n\n• 🎮 ${count} skin${count !== 1 ? "s" : ""} — ${(count * 1500).toLocaleString()} V-Bucks${hasFounders ? "\n• 🌟 Founders Pack — 2,500 V-Bucks" : ""}${hasCrew ? "\n• 👑 Crew Pack — 3,000 V-Bucks" : ""}\n• 💰 Current balance: ${currentVbucks.toLocaleString()} V-Bucks\n\n💰 **Total asking price:** ${total.toLocaleString()} V-Bucks\n\n*Your account listing is now live!*`)
             .setColor(0xe53238).setFooter({ text: "eBay • Fortnite Marketplace" }).setTimestamp()],
         });
         setTimeout(async () => {
           try {
-            addVbucks(userId, currentVbucks);
-            await interaction.followUp({ content: `<@${userId}> 🎉 **rocky_tyla** just bought your entire account for **"${listingName}"**! Your V-Bucks have been **doubled** — you now have **${(currentVbucks * 2).toLocaleString()} V-Bucks**! 💰` });
+            await interaction.followUp({ content: `<@${userId}> 🎉 **rocky_tyla** just bought your entire account for **"${listingName}"**! The deal is done! 💰` });
           } catch {}
         }, 30000);
       }
@@ -3240,6 +3240,27 @@ const commands = [
         });
       });
       col.on("end", (_, r) => { if (r === "time") interaction.editReply({ components: [] }).catch(() => {}); });
+    },
+  },
+
+  {
+    data: new SlashCommandBuilder()
+      .setName("releaseredacted")
+      .setDescription("Release the [REDACTED] skin into the item shop (bot manager only)"),
+    async execute(interaction) {
+      if (interaction.user.id !== BOT_MANAGER_ID) return interaction.reply({ content: "❌ Only the bot manager can use this.", ephemeral: true });
+      const currentShop = _db.itemShop?.skins ?? [];
+      const alreadyIn = currentShop.some(s => s.skinId === "redacted");
+      if (alreadyIn) return interaction.reply({ content: "⚠️ **[REDACTED]** is already in the item shop.", ephemeral: true });
+      const redactedEntry = { skinId: REDACTED_SKIN.id, name: REDACTED_SKIN.name, rarity: REDACTED_SKIN.rarity, imageUrl: REDACTED_SKIN.imageUrl, price: REDACTED_SKIN.price };
+      const updatedShop = [redactedEntry, ...currentShop].slice(0, 11);
+      setItemShop(updatedShop);
+      await interaction.reply({
+        embeds: [new EmbedBuilder()
+          .setTitle("🔓 [REDACTED] Has Been Released!")
+          .setDescription("The classified **[REDACTED]** skin is now available in the item shop for **1,000,000 V-Bucks**.\n\nOnly the most dedicated players can afford this.")
+          .setColor(0x1a1a2e).setTimestamp()],
+      });
     },
   },
 
