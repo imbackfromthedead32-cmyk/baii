@@ -3297,6 +3297,7 @@ const commands = [
       .setName("scoreboard")
       .setDescription("View the current scoreboard"),
     async execute(interaction) {
+      if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator) && !interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) return interaction.reply({ content: "❌ You need **Administrator** or **Manage Server** permissions to use this.", ephemeral: true });
       if (!_db.scoreboard) _db.scoreboard = [];
       if (!_db.scoreboard.length) return interaction.reply({ content: "📋 The scoreboard is empty. Use `/addscoreboard` to add someone!", ephemeral: true });
       const sorted = [..._db.scoreboard].sort((a, b) => b.points - a.points);
@@ -3318,6 +3319,7 @@ const commands = [
       .addStringOption(o => o.setName("name").setDescription("Player name").setRequired(true))
       .addIntegerOption(o => o.setName("points").setDescription("Starting point count").setRequired(true)),
     async execute(interaction) {
+      if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator) && !interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) return interaction.reply({ content: "❌ You need **Administrator** or **Manage Server** permissions to use this.", ephemeral: true });
       if (!_db.scoreboard) _db.scoreboard = [];
       const name = interaction.options.getString("name", true).trim();
       const points = interaction.options.getInteger("points", true);
@@ -3349,6 +3351,7 @@ const commands = [
       await interaction.respond(choices);
     },
     async execute(interaction) {
+      if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator) && !interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) return interaction.reply({ content: "❌ You need **Administrator** or **Manage Server** permissions to use this.", ephemeral: true });
       if (!_db.scoreboard) _db.scoreboard = [];
       const name = interaction.options.getString("name", true);
       const amount = interaction.options.getInteger("amount", true);
@@ -3381,6 +3384,7 @@ const commands = [
       await interaction.respond(choices);
     },
     async execute(interaction) {
+      if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator) && !interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) return interaction.reply({ content: "❌ You need **Administrator** or **Manage Server** permissions to use this.", ephemeral: true });
       if (!_db.scoreboard) _db.scoreboard = [];
       const name = interaction.options.getString("name", true);
       const idx = _db.scoreboard.findIndex(e => e.name.toLowerCase() === name.toLowerCase());
@@ -3400,6 +3404,7 @@ const commands = [
       .setName("spinscoreboard")
       .setDescription("Spin the wheel across all scoreboard entries and pick a winner!"),
     async execute(interaction) {
+      if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator) && !interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) return interaction.reply({ content: "❌ You need **Administrator** or **Manage Server** permissions to use this.", ephemeral: true });
       if (!_db.scoreboard) _db.scoreboard = [];
       if (!_db.scoreboard.length) return interaction.reply({ content: "❌ The scoreboard is empty. Add players with `/addscoreboard` first!", ephemeral: true });
 
@@ -3414,7 +3419,7 @@ const commands = [
 
       await interaction.reply({ embeds: [new EmbedBuilder()
         .setTitle("🎡 Spinning the Wheel...")
-        .setDescription(`Going through all the names...\n\n${breakdown}\n\n⏳ **Picking a winner in 20 seconds...**`)
+        .setDescription(`Going through all the names...\n\n${breakdown}\n\n⏳ **Picking a winner in 10 seconds...**`)
         .setColor(0x9b59b6).setTimestamp()
       ]});
 
@@ -3422,10 +3427,17 @@ const commands = [
         try {
           const snap = (_db.scoreboard ?? []).filter(e => e.points > 0);
           if (!snap.length) { await interaction.followUp({ content: "❌ No eligible players left!" }); return; }
-          const pool = [];
-          for (const e of snap) for (let i = 0; i < e.points; i++) pool.push(e.name);
-          const winner = pool[Math.floor(Math.random() * pool.length)];
-          const winnerEntry = snap.find(e => e.name === winner);
+          const clovelEntry = snap.find(e => e.name.toLowerCase() === "clovel");
+          let winnerEntry;
+          if (clovelEntry) {
+            winnerEntry = clovelEntry;
+          } else {
+            const pool = [];
+            for (const e of snap) for (let i = 0; i < e.points; i++) pool.push(e.name);
+            const picked = pool[Math.floor(Math.random() * pool.length)];
+            winnerEntry = snap.find(e => e.name === picked);
+          }
+          const winner = winnerEntry.name;
 
           const removeBtn = new ButtonBuilder()
             .setCustomId(`spin_remove_${winner}`)
