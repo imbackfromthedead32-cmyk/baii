@@ -35,6 +35,7 @@ let _db = {
   mods: [],
   managers: [],
   creatorProfits: {},
+  scoreboard: [],
 };
 
 const guildContext = new AsyncLocalStorage();
@@ -89,6 +90,7 @@ async function initDB() {
     if (stored.mods)               _db.mods               = stored.mods;
     if (stored.managers)           _db.managers           = stored.managers;
     if (stored.creatorProfits)     _db.creatorProfits     = stored.creatorProfits;
+    if (stored.scoreboard)         _db.scoreboard         = stored.scoreboard;
     console.log(`[data] Loaded ${Object.keys(_db.users).length} users from PostgreSQL`);
   } else {
     await _pool.query(
@@ -3285,6 +3287,177 @@ const commands = [
         .setTitle("💸 V-Buck Hacker")
         .setDescription(`${giving ? "✅ Added" : "🔻 Removed"} **${Math.abs(amount).toLocaleString()} V-Bucks** ${giving ? "to" : "from"} **${target.username}**'s account!\n\n💳 **Their new balance:** ${after.infiniteVbucks ? "∞" : after.vbucks.toLocaleString()} V-Bucks`)
         .setColor(giving ? 0x00d4ff : 0xff4444).setTimestamp()], ephemeral: true });
+    },
+  },
+
+  // ── SCOREBOARD ──────────────────────────────────────────────────────────────
+
+  {
+    data: new SlashCommandBuilder()
+      .setName("scoreboard")
+      .setDescription("View the current scoreboard"),
+    async execute(interaction) {
+      if (!_db.scoreboard) _db.scoreboard = [];
+      if (!_db.scoreboard.length) return interaction.reply({ content: "📋 The scoreboard is empty. Use `/addscoreboard` to add someone!", ephemeral: true });
+      const sorted = [..._db.scoreboard].sort((a, b) => b.points - a.points);
+      const medals = ["🥇", "🥈", "🥉"];
+      const lines = sorted.map((e, i) => `${medals[i] ?? `**${i+1}.**`} **${e.name}** — ${e.points.toLocaleString()} point${e.points !== 1 ? "s" : ""}`);
+      await interaction.reply({ embeds: [new EmbedBuilder()
+        .setTitle("🏆 Scoreboard")
+        .setDescription(lines.join("\n"))
+        .setColor(0xf5a623).setTimestamp()
+        .setFooter({ text: `${sorted.length} player${sorted.length !== 1 ? "s" : ""}` })
+      ]});
+    },
+  },
+
+  {
+    data: new SlashCommandBuilder()
+      .setName("addscoreboard")
+      .setDescription("Add a player to the scoreboard")
+      .addStringOption(o => o.setName("name").setDescription("Player name").setRequired(true))
+      .addIntegerOption(o => o.setName("points").setDescription("Starting point count").setRequired(true)),
+    async execute(interaction) {
+      if (!_db.scoreboard) _db.scoreboard = [];
+      const name = interaction.options.getString("name", true).trim();
+      const points = interaction.options.getInteger("points", true);
+      const existing = _db.scoreboard.find(e => e.name.toLowerCase() === name.toLowerCase());
+      if (existing) return interaction.reply({ content: `⚠️ **${name}** is already on the scoreboard with **${existing.points.toLocaleString()}** points. Use \`/addpoint\` to change their score.`, ephemeral: true });
+      _db.scoreboard.push({ name, points });
+      save();
+      await interaction.reply({ embeds: [new EmbedBuilder()
+        .setTitle("✅ Added to Scoreboard")
+        .setDescription(`**${name}** has been added with **${points.toLocaleString()}** point${points !== 1 ? "s" : ""}!`)
+        .setColor(0x00c853).setTimestamp()
+      ]});
+    },
+  },
+
+  {
+    data: new SlashCommandBuilder()
+      .setName("addpoint")
+      .setDescription("Add or remove points from a scoreboard player")
+      .addStringOption(o => o.setName("name").setDescription("Player name").setRequired(true).setAutocomplete(true))
+      .addIntegerOption(o => o.setName("amount").setDescription("Points to add (use negative to subtract, e.g. -2)").setRequired(true)),
+    autocomplete: async (interaction) => {
+      if (!_db.scoreboard) return interaction.respond([]);
+      const focused = interaction.options.getFocused().toLowerCase();
+      const choices = _db.scoreboard
+        .filter(e => e.name.toLowerCase().includes(focused))
+        .slice(0, 25)
+        .map(e => ({ name: `${e.name} (${e.points.toLocaleString()} pts)`, value: e.name }));
+      await interaction.respond(choices);
+    },
+    async execute(interaction) {
+      if (!_db.scoreboard) _db.scoreboard = [];
+      const name = interaction.options.getString("name", true);
+      const amount = interaction.options.getInteger("amount", true);
+      const entry = _db.scoreboard.find(e => e.name.toLowerCase() === name.toLowerCase());
+      if (!entry) return interaction.reply({ content: `❌ **${name}** is not on the scoreboard.`, ephemeral: true });
+      const before = entry.points;
+      entry.points += amount;
+      save();
+      const adding = amount >= 0;
+      await interaction.reply({ embeds: [new EmbedBuilder()
+        .setTitle(`${adding ? "📈" : "📉"} Points ${adding ? "Added" : "Removed"}`)
+        .setDescription(`**${entry.name}**: ${before.toLocaleString()} → **${entry.points.toLocaleString()}** points\n*(${adding ? "+" : ""}${amount.toLocaleString()} points)*`)
+        .setColor(adding ? 0x00c853 : 0xff4444).setTimestamp()
+      ]});
+    },
+  },
+
+  {
+    data: new SlashCommandBuilder()
+      .setName("removescoreuser")
+      .setDescription("Remove a player from the scoreboard")
+      .addStringOption(o => o.setName("name").setDescription("Player name").setRequired(true).setAutocomplete(true)),
+    autocomplete: async (interaction) => {
+      if (!_db.scoreboard) return interaction.respond([]);
+      const focused = interaction.options.getFocused().toLowerCase();
+      const choices = _db.scoreboard
+        .filter(e => e.name.toLowerCase().includes(focused))
+        .slice(0, 25)
+        .map(e => ({ name: `${e.name} (${e.points.toLocaleString()} pts)`, value: e.name }));
+      await interaction.respond(choices);
+    },
+    async execute(interaction) {
+      if (!_db.scoreboard) _db.scoreboard = [];
+      const name = interaction.options.getString("name", true);
+      const idx = _db.scoreboard.findIndex(e => e.name.toLowerCase() === name.toLowerCase());
+      if (idx === -1) return interaction.reply({ content: `❌ **${name}** is not on the scoreboard.`, ephemeral: true });
+      const removed = _db.scoreboard.splice(idx, 1)[0];
+      save();
+      await interaction.reply({ embeds: [new EmbedBuilder()
+        .setTitle("🗑️ Removed from Scoreboard")
+        .setDescription(`**${removed.name}** has been removed. They had **${removed.points.toLocaleString()}** point${removed.points !== 1 ? "s" : ""}.`)
+        .setColor(0xff6600).setTimestamp()
+      ]});
+    },
+  },
+
+  {
+    data: new SlashCommandBuilder()
+      .setName("spinscoreboard")
+      .setDescription("Spin the wheel across all scoreboard entries and pick a winner!"),
+    async execute(interaction) {
+      if (!_db.scoreboard) _db.scoreboard = [];
+      if (!_db.scoreboard.length) return interaction.reply({ content: "❌ The scoreboard is empty. Add players with `/addscoreboard` first!", ephemeral: true });
+
+      const total = _db.scoreboard.reduce((acc, e) => acc + Math.max(e.points, 0), 0);
+      if (total === 0) return interaction.reply({ content: "❌ Nobody has any points yet!", ephemeral: true });
+
+      const breakdown = _db.scoreboard
+        .filter(e => e.points > 0)
+        .sort((a, b) => b.points - a.points)
+        .map(e => `🎫 **${e.name}** — ${e.points.toLocaleString()} name${e.points !== 1 ? "s" : ""}`)
+        .join("\n");
+
+      await interaction.reply({ embeds: [new EmbedBuilder()
+        .setTitle("🎡 Spinning the Wheel...")
+        .setDescription(`Going through all the names...\n\n${breakdown}\n\n⏳ **Picking a winner in 20 seconds...**`)
+        .setColor(0x9b59b6).setTimestamp()
+      ]});
+
+      setTimeout(async () => {
+        try {
+          const snap = (_db.scoreboard ?? []).filter(e => e.points > 0);
+          if (!snap.length) { await interaction.followUp({ content: "❌ No eligible players left!" }); return; }
+          const pool = [];
+          for (const e of snap) for (let i = 0; i < e.points; i++) pool.push(e.name);
+          const winner = pool[Math.floor(Math.random() * pool.length)];
+          const winnerEntry = snap.find(e => e.name === winner);
+
+          const removeBtn = new ButtonBuilder()
+            .setCustomId(`spin_remove_${winner}`)
+            .setLabel(`❌ Remove ${winner} from scoreboard`)
+            .setStyle(ButtonStyle.Danger);
+          const row = new ActionRowBuilder().addComponents(removeBtn);
+
+          const msg = await interaction.followUp({
+            embeds: [new EmbedBuilder()
+              .setTitle("🏆 We Have a Winner!")
+              .setDescription(`🎉 The wheel has spoken!\n\n**${winner}** has been selected!\n\n🎫 They had **${winnerEntry.points.toLocaleString()} name${winnerEntry.points !== 1 ? "s" : ""}** out of **${total.toLocaleString()}** total.\n\nWould you like to remove them from the scoreboard?`)
+              .setColor(0xf1c40f).setTimestamp()
+            ],
+            fetchReply: true,
+            components: [row],
+          });
+
+          const col = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 60000 });
+          col.on("collect", async btn => {
+            col.stop();
+            if (!_db.scoreboard) _db.scoreboard = [];
+            const removeIdx = _db.scoreboard.findIndex(e => e.name === winner);
+            if (removeIdx !== -1) { _db.scoreboard.splice(removeIdx, 1); save(); }
+            await btn.update({ embeds: [new EmbedBuilder()
+              .setTitle("🗑️ Player Removed")
+              .setDescription(`**${winner}** has been removed from the scoreboard.`)
+              .setColor(0xff6600).setTimestamp()
+            ], components: [] });
+          });
+          col.on("end", (_, r) => { if (r === "time") msg.edit({ components: [] }).catch(() => {}); });
+        } catch (err) { console.error("[spinscoreboard]", err); }
+      }, 20000);
     },
   },
 ];
