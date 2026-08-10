@@ -1293,6 +1293,39 @@ const SPRITES = [
 const SPRITE_RARITY_WEIGHTS = { Common: 70, Epic: 20, Legendary: 8, Mythic: 2 };
 const SPRITE_RARITY_EMOJI = { Common: "⚪", Epic: "🟣", Legendary: "🟡", Mythic: "🔴" };
 const SPRITE_RARITY_COLOR = { Common: 0x808080, Epic: 0x9b4dca, Legendary: 0xf4a01a, Mythic: 0xff2d55 };
+const SPRITE_PAGE_SIZE = 4;
+const SPRITE_PRAY_COOLDOWN = 25 * 60 * 1000;
+const SPRITE_FIND_SOURCES = ["Fishing", "Supply Drops", "Chests", "Openable Commands"];
+
+// Image cache. If FORTNITE_API_KEY is configured, /api/v2/sprites is queried and
+// the returned icon/image URLs are used for the Sprite Index and variant pages.
+const SPRITE_IMAGE_CACHE = new Map();
+async function loadSpriteImages() {
+  const key = process.env.FORTNITE_API_KEY;
+  if (!key || SPRITE_IMAGE_CACHE.size) return;
+  try {
+    const res = await fetch("https://prod.api-fortnite.com/api/v2/sprites", { headers: { "x-api-key": key, Accept: "application/json" } });
+    if (!res.ok) return;
+    const body = await res.json();
+    const list = Array.isArray(body) ? body : (body.data ?? body.sprites ?? []);
+    for (const item of list) {
+      const name = String(item.name ?? item.displayName ?? "").toLowerCase();
+      const variant = String(item.variant ?? item.type ?? "normal").toLowerCase();
+      const image = item.image ?? item.imageUrl ?? item.icon ?? item.iconUrl ?? item.images?.icon ?? item.images?.small ?? item.images?.large;
+      if (name && image) SPRITE_IMAGE_CACHE.set(`${name}|${variant}`, image);
+    }
+  } catch (err) { console.warn("[sprites] image catalog unavailable:", err.message); }
+}
+function spriteImageUrl(sprite, variantId = "normal") {
+  const keys = [
+    `${sprite.name.toLowerCase()}|${variantId.toLowerCase()}`,
+    `${sprite.name.replace(/ sprite$/i, "").toLowerCase()}|${variantId.toLowerCase()}`,
+    `${sprite.name.toLowerCase()}|normal`,
+    `${sprite.name.replace(/ sprite$/i, "").toLowerCase()}|normal`
+  ];
+  return keys.map(k => SPRITE_IMAGE_CACHE.get(k)).find(Boolean) ?? null;
+}
+
 const SPRITE_CHEST_COOLDOWN = 15 * 60 * 1000;
 const SPRITE_CHEST_FLASH_COOLDOWN = 5 * 60 * 1000;
 const SPRITE_EXTRACTION_TIME = 30 * 1000;
@@ -1438,36 +1471,104 @@ function takeSpriteDamageAndDrop(guildId, targetId) {
   return equipped;
 }
 function choosePortableCandidates(user) { return allUserSprites(user).slice(0, 25); }
+function deadSprites(user) { return user.deadSprites ?? []; }
+function addDeadSprite(userId, sprite, reason = "lost") {
+  const user = getUser(userId);
+  user.deadSprites = [...(user.deadSprites ?? []), { ...sprite, lostAt: Date.now(), lossReason: reason }];
+  save();
+}
+function removeDeadSprite(userId, instanceId) {
+  const user = getUser(userId);
+  const arr = [...(user.deadSprites ?? [])];
+  const idx = arr.findIndex(s => s.instanceId === instanceId);
+  if (idx === -1) return null;
+  const [removed] = arr.splice(idx, 1); user.deadSprites = arr; save(); return removed;
+}
+function reviveDeadSpriteForDust(userId, instanceId) {
+  const user = getUser(userId);
+  const dead = (user.deadSprites ?? []).find(s => s.instanceId === instanceId);
+  if (!dead) return { error: "That lost sprite is no longer available." };
+  const cost = spriteDustValue(dead) * 2;
+  if ((user.spriteDust ?? 0) < cost) return { error: `You need **${cost.toLocaleString()} Sprite Dust** to buy back ${spriteLabel(dead)}.` };
+  if (dead.stolenBy) {
+    const thief = getUser(dead.stolenBy);
+    thief.spriteInventory = (thief.spriteInventory ?? []).filter(s => s.instanceId !== instanceId);
+    thief.stolenSprites = (thief.stolenSprites ?? []).filter(s => s.instanceId !== instanceId);
+    if (thief.equippedSprite === instanceId) thief.equippedSprite = null;
+  }
+  const removed = removeDeadSprite(userId, instanceId);
+  addSpriteToInventory(userId, { ...removed, recoveredAt: Date.now(), recoveredFromDead: true, stolenBy: null });
+  updateUser(userId, { spriteDust: (getUser(userId).spriteDust ?? 0) - cost });
+  save();
+  return { sprite: removed, cost };
+}
+
+function maybeFindSpriteFromOpenable(interaction) {
+  const eligible = new Set(["fish", "supply_drop", "llama", "founderspack"]);
+  if (!eligible.has(interaction.commandName)) return null;
+  // Finding a Sprite is uncommon. The command can reveal a Sprite separately from its normal reward.
+  if (Math.random() > 0.12) return null;
+  const reward = makeSpriteInstance(pickSpriteByRarity(), pickSpriteVariant(), { foundFrom: interaction.commandName });
+  return reward;
+}
 
 const commands = [
 
   // ── SPRITES ────────────────────────────────────────────────────────────────
   {
-    data: new SlashCommandBuilder().setName("sprites").setDescription("View every sprite and which ones you own"),
+    data: new SlashCommandBuilder().setName("sprites").setDescription("View your Sprite Index with variants"),
     async execute(interaction) {
-      const userId = interaction.user.id;
-      const user = getUser(userId);
-      const owned = new Set((user.spriteInventory ?? []).map(s => s.spriteId));
-      const lines = SPRITES.map(s => `${SPRITE_RARITY_EMOJI[s.rarity]} **${s.name}** — ${s.rarity}${owned.has(s.id) ? "" : " ❌"}\n> ${s.ability}`);
-      const embed = new EmbedBuilder()
-        .setTitle(`🧩 ${interaction.user.username}'s Sprite Index`)
-        .setDescription(lines.join("\n\n"))
-        .addFields({ name: "🪶 Sprite Dust", value: `${(user.spriteDust ?? 0).toLocaleString()}`, inline: true }, { name: "🎽 Equipped", value: getEquippedSprite(user) ? spriteLabel(getEquippedSprite(user)) : "None", inline: true })
-        .setColor(0x5865f2).setTimestamp();
-      await interaction.reply({ embeds: [embed] });
+      const userId = interaction.user.id, user = getUser(userId);
+      await loadSpriteImages();
+      const pageCount = Math.max(1, Math.ceil(SPRITES.length / SPRITE_PAGE_SIZE));
+      let page = 0;
+      const build = () => {
+        const slice = SPRITES.slice(page * SPRITE_PAGE_SIZE, (page + 1) * SPRITE_PAGE_SIZE);
+        const ownedInstances = allUserSprites(user).filter(s => slice.some(x => x.id === s.spriteId));
+        const lines = slice.map(s => {
+          const ownedVariants = new Set(ownedInstances.filter(x => x.spriteId === s.id).map(x => x.variant));
+          const variants = SPRITE_VARIANTS.map(v => `${ownedVariants.has(v.id) ? "✅" : "❌"} ${v.name}`).join(" • ");
+          return `${SPRITE_RARITY_EMOJI[s.rarity]} **${s.name}** — ${s.rarity}
+> ${s.ability}
+> **Variants:** ${variants}`;
+        });
+        const embeds = slice.map((sprite, index) => {
+          const ownedVariants = new Set(ownedInstances.filter(x => x.spriteId === sprite.id).map(x => x.variant));
+          const image = spriteImageUrl(sprite, "normal");
+          const e = new EmbedBuilder().setTitle(`${SPRITE_RARITY_EMOJI[sprite.rarity]} ${sprite.name}`)
+            .setDescription(`**${sprite.rarity}**\n\n${sprite.ability}\n\n**Variants**\n${SPRITE_VARIANTS.map(v => `${ownedVariants.has(v.id) ? "✅" : "❌"} ${v.name}`).join("\n")}`)
+            .setColor(SPRITE_RARITY_COLOR[sprite.rarity]);
+          if (image) e.setImage(image);
+          return e;
+        });
+        const embed = new EmbedBuilder().setTitle(`🧩 ${interaction.user.username}'s Sprite Index • Page ${page+1}/${pageCount}`)
+          .setDescription(`Page **${page+1}/${pageCount}** — each card shows the actual sprite image when the Fortnite Sprite API is configured.\n\n${lines.join("\n\n")}`)
+          .addFields(
+            { name: "🪶 Sprite Dust", value: `${(user.spriteDust ?? 0).toLocaleString()}`, inline: true },
+            { name: "🎽 Equipped", value: getEquippedSprite(user) ? spriteLabel(getEquippedSprite(user)) : "None", inline: true },
+            { name: "☠️ Dead Sprites", value: `${deadSprites(user).length}`, inline: true }
+          ).setColor(0x5865f2).setFooter({ text: `Use the arrows to browse • Sprites can be found from fishing, supply drops, chests and openable commands.` }).setTimestamp();
+        embeds.unshift(embed);
+        const nav = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId(`sprites_prev_${userId}`).setLabel("◀ Previous").setStyle(ButtonStyle.Secondary).setDisabled(page === 0),
+          new ButtonBuilder().setCustomId(`sprites_next_${userId}`).setLabel("Next ▶").setStyle(ButtonStyle.Primary).setDisabled(page === pageCount-1)
+        );
+        return { embeds, nav };
+      };
+      const { embeds, nav } = build();
+      const msg = await interaction.reply({ embeds, components: [nav], fetchReply: true });
+      const col = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 120000, filter: b => b.user.id === userId });
+      col.on("collect", async btn => {
+        if (btn.customId.endsWith("prev_" + userId)) page = Math.max(0, page - 1);
+        else page = Math.min(pageCount - 1, page + 1);
+        const built = build(); await btn.update({ embeds: built.embeds, components: [built.nav] });
+      });
+      col.on("end", () => msg.edit({ components: [] }).catch(() => {}));
       if ((user.spriteInventory ?? []).length === 0 && (user.stolenSprites ?? []).length === 0) {
         const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`sprite_starter_${userId}`).setLabel("🎁 Open Starter Sprite").setStyle(ButtonStyle.Success));
-        const msg = await interaction.followUp({ embeds: [new EmbedBuilder().setTitle("🎁 Starter Sprite Available!").setDescription("You don't own any sprites yet. Open your starter box to receive an **Aura Sprite**, **Boss Sprite**, or — with a **1% chance** — a Mythic sprite.").setColor(0x00d4ff)], components: [row], fetchReply: true });
-        const col = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 60000, filter: b => b.user.id === userId });
-        col.on("collect", async btn => {
-          const current = getUser(userId);
-          if ((current.spriteInventory ?? []).length || (current.stolenSprites ?? []).length) { await btn.update({ content: "❌ You already have a sprite.", embeds: [], components: [] }); col.stop(); return; }
-          const reward = starterSpriteRoll();
-          addSpriteToInventory(userId, reward);
-          await btn.update({ embeds: [new EmbedBuilder().setTitle("🎁 Starter Sprite Opened!").setDescription(`You received ${spriteLabel(reward)}!\n\n**Ability:** ${reward.ability}\n\nUse \/equipsprite to equip it.`).setColor(SPRITE_RARITY_COLOR[reward.rarity])], components: [] });
-          col.stop();
-        });
-        col.on("end", (_, reason) => { if (reason === "time") msg.edit({ components: [] }).catch(() => {}); });
+        const starter = await interaction.followUp({ embeds: [new EmbedBuilder().setTitle("🎁 Starter Sprite Available!").setDescription("You don't own any sprites yet. Open your starter box to receive an **Aura Sprite**, **Boss Sprite**, or — with a **1% chance** — a Mythic sprite.").setColor(0x00d4ff)], components: [row], fetchReply: true });
+        const sc = starter.createMessageComponentCollector({ componentType: ComponentType.Button, time: 60000, filter: b => b.user.id === userId });
+        sc.on("collect", async btn => { const current = getUser(userId); if ((current.spriteInventory ?? []).length || (current.stolenSprites ?? []).length) return btn.update({ content: "❌ You already have a sprite.", embeds: [], components: [] }); const reward = starterSpriteRoll(); addSpriteToInventory(userId, reward); await btn.update({ embeds: [new EmbedBuilder().setTitle("🎁 Starter Sprite Opened!").setDescription(`You received ${spriteLabel(reward)}!\n\n**Ability:** ${reward.ability}\n\nUse /equipsprite to equip it.`).setColor(SPRITE_RARITY_COLOR[reward.rarity])], components: [] }); sc.stop(); });
       }
     },
   },
@@ -1579,6 +1680,36 @@ const commands = [
   },
 
   {
+    data: new SlashCommandBuilder().setName("pray").setDescription("Pray for a random Sprite (25 minute cooldown)"),
+    async execute(interaction) {
+      const userId = interaction.user.id, user = getUser(userId);
+      const remaining = Math.max(0, (user.lastSpritePray ?? 0) + SPRITE_PRAY_COOLDOWN - Date.now());
+      if (remaining > 0) return interaction.reply({ content: `🙏 You have already prayed. Try again in **${Math.ceil(remaining/60000)}m**.`, ephemeral: true });
+      updateUser(userId, { lastSpritePray: Date.now() });
+      const reward = makeSpriteInstance(pickSpriteByRarity(), pickSpriteVariant(), { foundFrom: "pray" });
+      const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`pray_extract_${userId}_${reward.instanceId}`).setLabel("📦 Extract Sprite").setStyle(ButtonStyle.Success));
+      await interaction.reply({ embeds: [new EmbedBuilder().setTitle("🙏 The Sprite Gods Answered...").setDescription(`Your prayer revealed **${spriteLabel(reward)}**!\n> ${reward.ability}\n\nExtract it to add it to your Sprite Index and receive Sprite Dust.`).setColor(SPRITE_RARITY_COLOR[reward.rarity])], components: [row] });
+      const msg = await interaction.fetchReply();
+      const col = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 60000, filter: b => b.user.id === userId });
+      col.on("collect", async btn => { const dust = spriteDustValue(reward); addSpriteToInventory(userId, reward); updateUser(userId, { spriteDust: (getUser(userId).spriteDust ?? 0) + dust }); await btn.update({ embeds: [new EmbedBuilder().setTitle("🙏 Prayer Sprite Extracted!").setDescription(`${spriteLabel(reward)} is now in your Sprite Index.\n\n💠 **+${dust.toLocaleString()} Sprite Dust**`).setColor(SPRITE_RARITY_COLOR[reward.rarity])], components: [] }); col.stop(); });
+    },
+  },
+
+  {
+    data: new SlashCommandBuilder().setName("deadsprites").setDescription("View sprites you have lost and buy them back with Sprite Dust"),
+    async execute(interaction) {
+      const userId = interaction.user.id, user = getUser(userId), dead = deadSprites(user);
+      if (!dead.length) return interaction.reply({ embeds: [new EmbedBuilder().setTitle("☠️ Dead Sprites").setDescription("You have no lost sprites.").setColor(0x444444)] });
+      const options = dead.slice(-25).reverse().map(s => new StringSelectMenuOptionBuilder().setLabel(`${s.name} — ${getSpriteVariant(s.variant).name}`.slice(0,100)).setDescription(`Buy back for ${(spriteDustValue(s)*2).toLocaleString()} Dust`).setValue(s.instanceId));
+      const row = new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId(`deadsprites_buy_${userId}`).setPlaceholder("Select a lost sprite to buy back...").addOptions(options));
+      const embed = new EmbedBuilder().setTitle("☠️ Dead Sprites").setDescription(dead.slice(-25).reverse().map(s => `${spriteLabel(s)} — **Buy back: ${(spriteDustValue(s)*2).toLocaleString()} Dust**`).join("\n")).setColor(0x555555);
+      const msg = await interaction.reply({ embeds: [embed], components: [row], fetchReply: true });
+      const col = msg.createMessageComponentCollector({ componentType: ComponentType.StringSelect, time: 60000, filter: s => s.user.id === userId });
+      col.on("collect", async sel => { const result = reviveDeadSpriteForDust(userId, sel.values[0]); if (result.error) return sel.reply({ content: `❌ ${result.error}`, ephemeral: true }); await sel.update({ embeds: [new EmbedBuilder().setTitle("♻️ Sprite Bought Back!").setDescription(`${spriteLabel(result.sprite)} returned to your Sprite Index for **${result.cost.toLocaleString()} Sprite Dust**.`).setColor(0x00d4ff)], components: [] }); col.stop(); });
+    },
+  },
+
+  {
     data: new SlashCommandBuilder().setName("dustshop").setDescription("Spend Sprite Dust in the Dust Shop"),
     async execute(interaction) {
       const userId = interaction.user.id, user = getUser(userId), dust = user.spriteDust ?? 0;
@@ -1640,7 +1771,7 @@ const commands = [
       await interaction.reply({ embeds: [new EmbedBuilder().setTitle("🧩 Sprite Chest Opened!").setDescription(`The chest contained:\n\n${spriteLabel(sprite)}\n> ${sprite.ability}\n\nYou must extract it before it enters your Sprite Index.`).setColor(SPRITE_RARITY_COLOR[sprite.rarity])], components: [row] });
       const msg = await interaction.fetchReply();
       const col = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 60000, filter: b => b.user.id === userId });
-      col.on("collect", async btn => { addSpriteToInventory(userId, sprite); await btn.update({ embeds: [new EmbedBuilder().setTitle("✅ Sprite Extracted!").setDescription(`${spriteLabel(sprite)} is now in your Sprite Index.`).setColor(SPRITE_RARITY_COLOR[sprite.rarity])], components: [] }); col.stop(); });
+      col.on("collect", async btn => { const dust = spriteDustValue(sprite); addSpriteToInventory(userId, sprite); updateUser(userId, { spriteDust: (getUser(userId).spriteDust ?? 0) + dust }); await btn.update({ embeds: [new EmbedBuilder().setTitle("✅ Sprite Extracted!").setDescription(`${spriteLabel(sprite)} is now in your Sprite Index.\n\n💠 **+${dust.toLocaleString()} Sprite Dust**`).setColor(SPRITE_RARITY_COLOR[sprite.rarity])], components: [] }); col.stop(); });
     },
   },
 
@@ -2371,6 +2502,12 @@ const commands = [
         }
       }
       // reecebamford grants Chaos Agent once, directly from the creator code.
+      if (match.freeSprite && match.freeSpriteName) {
+        const freshUser = getUser(userId);
+        const already = allUserSprites(freshUser).some(s => s.spriteId === match.freeSpriteName);
+        if (already) desc += `\n\n🍀 **Clover Sprite:** You already own the Clover Sprite — no duplicate given.`;
+        else { const sprite = makeSpriteInstance(getSpriteById(match.freeSpriteName), "normal", { creatorCodeGift: "clovel" }); addSpriteToInventory(userId, sprite); desc += `\n\n🍀 **Gift:** **Clover Sprite** has been added to your Sprite Index!`; }
+      }
       if (match.freeSkinName === "Chaos Agent") {
         const freshUser = getUser(userId);
         const chaos = await findSkinByName("Chaos Agent");
@@ -3998,6 +4135,22 @@ client.on("interactionCreate", async interaction => {
       }
       try {
         await command.execute(interaction);
+        try {
+          const found = maybeFindSpriteFromOpenable(interaction);
+          if (found) {
+            const dust = spriteDustValue(found);
+            const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`openable_sprite_${interaction.user.id}_${found.instanceId}`).setLabel("📦 Extract Sprite").setStyle(ButtonStyle.Success));
+            await interaction.followUp({ embeds: [new EmbedBuilder().setTitle("🧩 You Found a Sprite!").setDescription(`While opening that reward, you discovered ${spriteLabel(found)}!\n\n> **${found.ability}**\n\nExtract it to add it to your Sprite Index and receive **${dust.toLocaleString()} Sprite Dust**.`).setColor(SPRITE_RARITY_COLOR[found.rarity])], components: [row] });
+            const reply = await interaction.fetchReply();
+            const collector = reply.createMessageComponentCollector({ componentType: ComponentType.Button, time: 60000, filter: b => b.user.id === interaction.user.id });
+            collector.on("collect", async btn => {
+              addSpriteToInventory(interaction.user.id, found);
+              updateUser(interaction.user.id, { spriteDust: (getUser(interaction.user.id).spriteDust ?? 0) + dust });
+              await btn.update({ embeds: [new EmbedBuilder().setTitle("✅ Sprite Extracted!").setDescription(`${spriteLabel(found)} is now in your Sprite Index.\n\n💠 **+${dust.toLocaleString()} Sprite Dust**`).setColor(SPRITE_RARITY_COLOR[found.rarity])], components: [] });
+              collector.stop();
+            });
+          }
+        } catch (spriteErr) { console.error("[openable sprite find]", spriteErr); }
         try { processSpriteCommandPerks(interaction.user.id); } catch (spriteErr) { console.error("[sprite perks]", spriteErr); }
       } catch (err) {
         console.error("[cmd error]", err);
@@ -4072,6 +4225,10 @@ client.on("messageCreate", async (message) => {
       const stolen = { ...drop.sprite, stolenFrom: drop.ownerId, stolenAt: Date.now() };
       const user = getUser(userId);
       user.stolenSprites = [...(user.stolenSprites ?? []), stolen];
+      const originalOwner = getUser(drop.ownerId);
+      const existingDead = (originalOwner.deadSprites ?? []).find(s => s.instanceId === stolen.instanceId);
+      if (!existingDead) originalOwner.deadSprites = [...(originalOwner.deadSprites ?? []), { ...stolen, stolenBy: userId, lostAt: Date.now(), lossReason: "stolen" }];
+      else existingDead.stolenBy = userId;
       save();
       await message.reply({ embeds: [new EmbedBuilder().setTitle("🥷 Sprite Stolen!").setDescription(`You stole ${spriteLabel(stolen)}!
 
