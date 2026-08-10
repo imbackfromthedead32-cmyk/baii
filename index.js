@@ -755,48 +755,11 @@ const SKIN_BASE_URL = process.env.REPLIT_DEV_DOMAIN
   : `http://localhost:${process.env.PORT || 3000}/skins`;
 
 const CUSTOM_SKINS = [];
-const STATIC_BUNDLES = [
-  {
-    id: "bundle_tyla",
-    name: "Tyla Locker Bundle",
-    rarity: "Icon",
-    imageUrl: "",
-    price: BUNDLE_PRICE,
-    isBundle: true,
-    skins: [
-      { id: "glitch",        name: "Glitch"        },
-      { id: "lovely",        name: "Lovely"        },
-      { id: "hatsune_miku",  name: "Hatsune Miku"  },
-      { id: "ariana_grande", name: "Ariana Grande" },
-    ],
-  },
-];
-
-let _overwatchBundleCache = null;
-async function getOverwatchBundle() {
-  if (_overwatchBundleCache) return _overwatchBundleCache;
-  const skins = await fetchFortniteSkins();
-  const OW_TERMS = ["tracer","mercy","genji","d.va"];
-  const owSkins = skins.filter(s => OW_TERMS.some(t => s.name.toLowerCase().includes(t)));
-  const chosen = owSkins.length >= 3 ? owSkins.slice(0,6) : skins.filter(s => s.rarity.toLowerCase() === "epic").slice(0,6);
-  _overwatchBundleCache = {
-    id: "bundle_overwatch",
-    name: "Overwatch Bundle",
-    rarity: "Epic",
-    imageUrl: "https://cdn.discordapp.com/attachments/1504485556325715980/1504535529474232391/fortnite-x-overwatch-all-skins-emotes-prices-full-showcase.jpg?ex=6a080027&is=6a06aea7&hm=053ee4016f3e9fe9a6d76caf5523140a0d1ea2bb899a50e150e7e8eb93a7716f&",
-    price: BUNDLE_PRICE,
-    isBundle: true,
-    skins: chosen.map(s => ({ id: s.id, name: s.name, imageUrl: s.imageUrl })),
-  };
-  return _overwatchBundleCache;
-}
-async function getAllBundles() {
-  const ow = await getOverwatchBundle();
-  return [...STATIC_BUNDLES, ow];
-}
-function getBundleById(id) {
-  return STATIC_BUNDLES.find(b => b.id === id) ?? null;
-}
+// Locker bundles removed. Bundle listings/spawns are intentionally disabled.
+const STATIC_BUNDLES = [];
+async function getOverwatchBundle() { return null; }
+async function getAllBundles() { return []; }
+function getBundleById(id) { return null; }
 const STW_KEYWORDS = ["robo","kevin","save the world","constructor","ninja","outlander","soldier","commando","striker","ramirez","headhunter","jonesy","penny","dim mak","brawler","dragon","powerhouse","hazard","renegade","urban assault","special forces"];
 const KNOWN_STW_IDS = ["CID_028_Athena_Commando_F","CID_029_Athena_Commando_F_Halloween","CID_017_Athena_Commando_M","CID_040_Athena_Commando_M_NinjaBlue"];
 let cachedSkins = [], cachedStwSkins = [];
@@ -982,10 +945,52 @@ function scheduleNextSpawn(client, guildId, channelId) {
   spawnTimers[guildId] = setTimeout(() => spawnRandom(client, guildId, channelId), getNextSpawnDelay());
 }
 
+function pickRandomSpriteWithAnyRarity() {
+  const sprite = SPRITES[Math.floor(Math.random() * SPRITES.length)];
+  const rarity = Object.keys(SPRITE_RARITY_WEIGHTS)[Math.floor(Math.random() * Object.keys(SPRITE_RARITY_WEIGHTS).length)];
+  const variant = pickSpriteVariant();
+  return makeSpriteInstance(sprite, variant, { rarity });
+}
+function parseForcedSpriteSpec(input) {
+  if (!input) return null;
+  const words = input.trim().split(/\s+/);
+  const rarityNames = Object.keys(SPRITE_RARITY_WEIGHTS).map(x => x.toLowerCase());
+  const variantNames = SPRITE_VARIANTS.map(x => x.name.toLowerCase());
+  let rarity = null, variant = null;
+  const remaining = [];
+  for (const word of words) {
+    const lower = word.toLowerCase();
+    if (!rarity && rarityNames.includes(lower)) rarity = Object.keys(SPRITE_RARITY_WEIGHTS).find(x => x.toLowerCase() === lower);
+    else if (!variant && variantNames.includes(lower)) variant = SPRITE_VARIANTS.find(x => x.name.toLowerCase() === lower)?.id;
+    else remaining.push(word);
+  }
+  const name = remaining.join(' ');
+  const sprite = SPRITES.find(x => x.name.toLowerCase() === name.toLowerCase()) || SPRITES.find(x => x.name.toLowerCase().replace(/\s*sprite$/,'') === name.toLowerCase());
+  if (!sprite) return null;
+  return makeSpriteInstance(sprite, variant || pickSpriteVariant(), rarity ? { rarity } : {});
+}
+async function spawnSprite(client, guildId, channelId, forced = false, specificSprite = null) {
+  if (activeSpawns[guildId]) return false;
+  const channel = client.channels.cache.get(channelId);
+  if (!channel) return false;
+  try {
+    const sprite = specificSprite ?? pickRandomSpriteWithAnyRarity();
+    const embed = new EmbedBuilder()
+      .setTitle(`${SPRITE_RARITY_EMOJI[sprite.rarity] ?? '🧩'} **${sprite.name}** has spawned!`)
+      .setDescription(`${spriteLabel(sprite)}\n\n> ${sprite.ability}\n\nType \`buy\` to claim it!`)
+      .setColor(SPRITE_RARITY_COLOR[sprite.rarity] ?? 0x00d4ff)
+      .setFooter({ text: 'Sprite Spawn • First come, first served!' })
+      .setTimestamp();
+    const msg = await channel.send({ embeds: [embed] });
+    activeSpawns[guildId] = { type: 'sprite', sprite, channelId, messageId: msg.id, claimedBy: null };
+    return true;
+  } catch { return false; }
+}
 async function spawnRandom(client, guildId, channelId) {
   const r = Math.random();
-  if (r < 1/35)  await spawnStwPacks(client, guildId, channelId);
+  if (r < 1/35) await spawnStwPacks(client, guildId, channelId);
   else if (r < 2/35) await spawnLuckPotion(client, guildId, channelId);
+  else if (r < 7/35) await spawnSprite(client, guildId, channelId);
   else await spawnSkinOrBundle(client, guildId, channelId);
 }
 
@@ -1206,6 +1211,12 @@ async function handleBuyMessage(message) {
     let desc = `<@${userId}> grabbed a **${label}**! Use it with \`/useluckpotion\`!\n\n+50 XP earned!`;
     if (gainedVbucks) desc += `\n\n🎉 **Milestone!** +250 V-Bucks bonus!`;
     embed = new EmbedBuilder().setTitle(`✨ ${message.author.username} claimed a ${label}!`).setDescription(desc).setColor(0x2ecc71).setTimestamp();
+  } else if (spawn.type === "sprite" && spawn.sprite) {
+    const sprite = spawn.sprite;
+    addSpriteToInventory(userId, sprite);
+    const dust = spriteDustValue(sprite);
+    updateUser(userId, { spriteDust: (getUser(userId).spriteDust ?? 0) + dust });
+    embed = new EmbedBuilder().setTitle(`🧩 ${message.author.username} claimed ${sprite.name}!`).setDescription(`${spriteLabel(sprite)}\n> ${sprite.ability}\n\n💠 **+${dust.toLocaleString()} Sprite Dust**`).setColor(SPRITE_RARITY_COLOR[sprite.rarity] ?? 0x00d4ff).setTimestamp();
   } else if (spawn.type === "skin" && spawn.skin) {
     addSkinToInventory(userId, spawn.skin.id, spawn.skin.name);
     progressQuest(userId, "catch_skins");
@@ -1368,7 +1379,16 @@ function pickSpriteByRarity(rarity = null) {
   const pool = SPRITES.filter(s => s.rarity === r);
   return pool.length ? pool[Math.floor(Math.random() * pool.length)] : SPRITES[0];
 }
-function pickSpriteVariant() { return weightedPick(SPRITE_VARIANTS).id; }
+function pickSpriteVariant(user = null) {
+  const demonEquipped = user && getEquippedSprite(user)?.spriteId === "demon";
+  if (demonEquipped) {
+    return weightedPick([
+      { id: "normal", weight: 45 }, { id: "gold", weight: 14 }, { id: "gummy", weight: 14 },
+      { id: "galaxy", weight: 10 }, { id: "cube", weight: 9 }, { id: "gem", weight: 8 }
+    ]).id;
+  }
+  return weightedPick(SPRITE_VARIANTS).id;
+}
 function spriteLabel(s) {
   const v = getSpriteVariant(s.variant);
   return `${SPRITE_RARITY_EMOJI[s.rarity] ?? "⚪"} **${s.name}** — ${v.name}`;
@@ -1680,18 +1700,24 @@ const commands = [
               const fresh = getUser(btn.user.id); let totalDust = 0; const extracted = []; const recovered = [];
               for (const instanceId of sel.values) {
                 const source = (fresh.spriteInventory ?? []).some(s => s.instanceId === instanceId) ? "spriteInventory" : "stolenSprites";
-                const removed = removeSpriteInstance(btn.user.id, instanceId, source);
-                if (!removed) continue;
+                let extractedSprite = null;
                 if (source === "stolenSprites") {
-                  // A stolen sprite becomes permanently owned after successful extraction.
-                  const ownedCopy = { ...removed };
+                  // Stolen sprites become permanently owned when extracted.
+                  const stolen = removeSpriteInstance(btn.user.id, instanceId, "stolenSprites");
+                  if (!stolen) continue;
+                  extractedSprite = { ...stolen };
                   const owner = getUser(btn.user.id);
-                  owner.spriteInventory = [...(owner.spriteInventory ?? []), ownedCopy];
-                  recovered.push(spriteLabel(removed));
+                  if (!(owner.spriteInventory ?? []).some(s => s.instanceId === extractedSprite.instanceId)) {
+                    owner.spriteInventory = [...(owner.spriteInventory ?? []), extractedSprite];
+                  }
+                  recovered.push(`${spriteLabel(extractedSprite)} → ${spriteDustValue(extractedSprite).toLocaleString()} dust`);
                 } else {
-                  totalDust += spriteDustValue(removed);
-                  extracted.push(`${spriteLabel(removed)} → ${spriteDustValue(removed).toLocaleString()} dust`);
+                  // Already-owned sprites stay in the extracted/equipped sprite list.
+                  extractedSprite = (fresh.spriteInventory ?? []).find(s => s.instanceId === instanceId);
+                  if (!extractedSprite) continue;
+                  extracted.push(`${spriteLabel(extractedSprite)} → ${spriteDustValue(extractedSprite).toLocaleString()} dust`);
                 }
+                totalDust += spriteDustValue(extractedSprite);
                 const g = spriteGraveyard(guildId).findIndex(d => d.sprite?.instanceId === instanceId);
                 if (g !== -1) spriteGraveyard(guildId).splice(g,1);
               }
@@ -1797,12 +1823,20 @@ const commands = [
       const remaining = Math.max(0, (user.lastSpriteChest ?? 0) + cooldown - Date.now());
       if (remaining > 0) return interaction.reply({ content: `⏳ Your Sprite Chest is on cooldown for **${Math.ceil(remaining/60000)}m**.`, ephemeral: true });
       updateUser(userId, { lastSpriteChest: Date.now() });
-      const sprite = makeSpriteInstance(pickSpriteByRarity(), pickSpriteVariant());
-      const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`sprite_chest_extract_${userId}_${sprite.instanceId}`).setLabel("📦 Extract Sprite").setStyle(ButtonStyle.Success));
-      await interaction.reply({ embeds: [new EmbedBuilder().setTitle("🧩 Sprite Chest Opened!").setDescription(`The chest contained:\n\n${spriteLabel(sprite)}\n> ${sprite.ability}\n\nYou must extract it before it enters your Sprite Index.`).setColor(SPRITE_RARITY_COLOR[sprite.rarity])], components: [row] });
+      const chestCount = equipped?.spriteId === "aura" ? 2 : 1;
+      const sprites = Array.from({ length: chestCount }, () => makeSpriteInstance(pickSpriteByRarity(), pickSpriteVariant(user)));
+      const totalDust = sprites.reduce((sum, sprite) => sum + spriteDustValue(sprite), 0);
+      const description = sprites.map((sprite, i) => `${chestCount > 1 ? `**${i + 1}.** ` : ""}${spriteLabel(sprite)}\n> ${sprite.ability}`).join("\n\n");
+      const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`sprite_chest_extract_${userId}_${sprites.map(s => s.instanceId).join("_")}`).setLabel(`📦 Extract ${chestCount === 2 ? "Sprites" : "Sprite"}`).setStyle(ButtonStyle.Success));
+      await interaction.reply({ embeds: [new EmbedBuilder().setTitle("🧩 Sprite Chest Opened!").setDescription(`The chest contained **${chestCount} sprite${chestCount === 2 ? "s" : ""}**:\n\n${description}\n\nYou must extract them before they enter your Sprite Index.`).setColor(SPRITE_RARITY_COLOR[sprites[0].rarity])], components: [row] });
       const msg = await interaction.fetchReply();
       const col = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 60000, filter: b => b.user.id === userId });
-      col.on("collect", async btn => { const dust = spriteDustValue(sprite); addSpriteToInventory(userId, sprite); updateUser(userId, { spriteDust: (getUser(userId).spriteDust ?? 0) + dust }); await btn.update({ embeds: [new EmbedBuilder().setTitle("✅ Sprite Extracted!").setDescription(`${spriteLabel(sprite)} is now in your Sprite Index.\n\n💠 **+${dust.toLocaleString()} Sprite Dust**`).setColor(SPRITE_RARITY_COLOR[sprite.rarity])], components: [] }); col.stop(); });
+      col.on("collect", async btn => {
+        for (const sprite of sprites) addSpriteToInventory(userId, sprite);
+        updateUser(userId, { spriteDust: (getUser(userId).spriteDust ?? 0) + totalDust });
+        await btn.update({ embeds: [new EmbedBuilder().setTitle("✅ Sprite Chest Extracted!").setDescription(`${sprites.map(spriteLabel).join("\n")}\n\n💠 **+${totalDust.toLocaleString()} Sprite Dust**`).setColor(0x00ff88)], components: [] });
+        col.stop();
+      });
     },
   },
 
@@ -1868,7 +1902,8 @@ const commands = [
   },
 
   {
-    data: new SlashCommandBuilder().setName("forcespawn").setDescription("Force a spawn in the spawn channel").addStringOption((o) => o.setName("item").setDescription("What to spawn").setRequired(false).addChoices({ name: "Random Skin", value: "skin" }, { name: "Bundle (25% chance variant)", value: "bundle" }, { name: "V-Bucks Drop", value: "vbucks" }, { name: "STW Packs", value: "stw" }, { name: "Founders Pack", value: "founders_pack" }, { name: "Founders Box", value: "founders_box" }, { name: "Luck Potion", value: "luckPotion" }, { name: "Xtra Luck Potion", value: "xtraLuckPotion" }, { name: "👑 Crew Pack", value: "crew" })).addStringOption((o) => o.setName("skin_name").setDescription("Specific skin name").setRequired(false)),
+    data: new SlashCommandBuilder().setName("forcespawn").setDescription("Force a spawn in the spawn channel").addStringOption((o) => o.setName("item").setDescription("What to spawn").setRequired(false).addChoices({ name: "Random Skin", value: "skin" }, { name: "Random Sprite", value: "sprite" }, { name: "V-Bucks Drop", value: "vbucks" }, { name: "STW Packs", value: "stw" }, { name: "Founders Pack", value: "founders_pack" }, { name: "Founders Box", value: "founders_box" }, { name: "Luck Potion", value: "luckPotion" }, { name: "Xtra Luck Potion", value: "xtraLuckPotion" }, { name: "👑 Crew Pack", value: "crew" })).addStringOption((o) => o.setName("skin_name").setDescription("Specific skin name").setRequired(false))
+      .addStringOption((o) => o.setName("sprite_name").setDescription("Sprite: e.g. Gem Grim or Mythic Reece").setRequired(false)),
     async execute(interaction) {
       if (!hasAdminAccess(interaction)) return interaction.reply({ content: "❌ You need Manage Server permission or bot admin access to use this command.", ephemeral: true });
       const guildId = interaction.guildId;
@@ -1877,7 +1912,14 @@ const commands = [
       if (!channelId) return interaction.reply({ content: "❌ No spawn channel! Use `/setup` first.", ephemeral: true });
       if (getActiveSpawn(guildId)) return interaction.reply({ content: `⚠️ Something is already spawned!`, ephemeral: true });
       const skinName = interaction.options.getString("skin_name");
+      const spriteName = interaction.options.getString("sprite_name");
       const item = interaction.options.getString("item") ?? "skin";
+      if (spriteName || item === "sprite") {
+        const forcedSprite = spriteName ? parseForcedSpriteSpec(spriteName) : pickRandomSpriteWithAnyRarity();
+        if (!forcedSprite) return interaction.reply({ content: `❌ Couldn't find that sprite. Try names like **Gem Grim**, **Gold Reece**, or **Mythic Grim**.`, ephemeral: true });
+        await interaction.reply({ content: `🧩 Spawning **${spriteLabel(forcedSprite)}** in <#${channelId}>...`, ephemeral: true });
+        await spawnSprite(interaction.client, guildId, channelId, true, forcedSprite); return;
+      }
       if (skinName) {
         await interaction.deferReply({ ephemeral: true });
         const match = await findSkinByName(skinName);
@@ -1886,7 +1928,6 @@ const commands = [
         await spawnSkin(interaction.client, guildId, channelId, true, match); return;
       }
       if (item === "crew") { await interaction.reply({ content: `👑 Spawning a **Crew Pack** in <#${channelId}>...`, ephemeral: true }); await spawnCrew(interaction.client, guildId, channelId); return; }
-      if (item === "bundle") { await interaction.reply({ content: `🎁 Spawning a **Bundle** in <#${channelId}>...`, ephemeral: true }); await spawnBundle(interaction.client, guildId, channelId); return; }
       const actions = { skin: () => spawnSkin(interaction.client, guildId, channelId, true), vbucks: () => spawnVbucks(interaction.client, guildId, channelId, true), stw: () => spawnStwPacks(interaction.client, guildId, channelId, true), founders_pack: () => spawnFoundersPack(interaction.client, guildId, channelId), founders_box: () => spawnFoundersBox(interaction.client, guildId, channelId), luckPotion: () => spawnLuckPotion(interaction.client, guildId, channelId, true, "luckPotion"), xtraLuckPotion: () => spawnLuckPotion(interaction.client, guildId, channelId, true, "xtraLuckPotion") };
       await interaction.reply({ content: `✅ Spawning in <#${channelId}>...`, ephemeral: true });
       await (actions[item] ?? actions.skin)();
@@ -1934,7 +1975,7 @@ const commands = [
   },
 
   {
-    data: new SlashCommandBuilder().setName("release").setDescription("Force specific skins or bundles into the Item Shop (up to 10)")
+    data: new SlashCommandBuilder().setName("release").setDescription("Force specific skins into the Item Shop (up to 10)")
       .addStringOption(o => o.setName("slot1").setDescription("Skin or bundle name").setRequired(true).setAutocomplete(true))
       .addStringOption(o => o.setName("slot2").setDescription("Skin or bundle name").setRequired(false).setAutocomplete(true))
       .addStringOption(o => o.setName("slot3").setDescription("Skin or bundle name").setRequired(false).setAutocomplete(true))
@@ -1948,10 +1989,8 @@ const commands = [
     autocomplete: async (interaction) => {
       const focused = interaction.options.getFocused().toLowerCase();
       const skins = await fetchFortniteSkins();
-      const bundles = await getAllBundles();
-      const bundleChoices = bundles.filter(b => b.name.toLowerCase().includes(focused)).map(b => ({ name: `📦 ${b.name} — Bundle (${b.price.toLocaleString()} V-Bucks)`, value: `bundle:${b.id}` }));
-      const skinChoices = skins.filter(s => s.name.toLowerCase().includes(focused)).slice(0, 20 - bundleChoices.length).map(s => ({ name: `${getRarityEmoji(s.rarity)} ${s.name} — ${s.rarity}`, value: `skin:${s.id}` }));
-      await interaction.respond([...bundleChoices, ...skinChoices].slice(0, 25));
+      const skinChoices = skins.filter(s => s.name.toLowerCase().includes(focused)).slice(0, 25).map(s => ({ name: `${getRarityEmoji(s.rarity)} ${s.name} — ${s.rarity}`, value: `skin:${s.id}` }));
+      await interaction.respond(skinChoices);
     },
     async execute(interaction) {
       if (!hasAdminAccess(interaction)) return interaction.reply({ content: "❌ You need Manage Server permission or bot admin access to use this command.", ephemeral: true });
@@ -1959,17 +1998,10 @@ const commands = [
       const slots = ["slot1","slot2","slot3","slot4","slot5","slot6","slot7","slot8","slot9","slot10"].map(s => interaction.options.getString(s)).filter(Boolean);
       const shopItems = [];
       const skins = await fetchFortniteSkins();
-      const bundles = await getAllBundles();
       for (const val of slots) {
-        if (val.startsWith("bundle:")) {
-          const bundleId = val.replace("bundle:", "");
-          const bundle = bundles.find(b => b.id === bundleId);
-          if (bundle) shopItems.push({ skinId: bundle.id, name: bundle.name, rarity: bundle.rarity, imageUrl: bundle.imageUrl, price: bundle.price, isBundle: true, bundleSkins: bundle.skins });
-        } else {
-          const skinId = val.replace("skin:", "");
-          const skin = skins.find(s => s.id === skinId) ?? await findSkinByName(val);
-          if (skin) shopItems.push({ skinId: skin.id, name: skin.name, rarity: skin.rarity, imageUrl: skin.imageUrl, price: SKIN_PRICE });
-        }
+        const skinId = val.replace("skin:", "");
+        const skin = skins.find(s => s.id === skinId) ?? await findSkinByName(skinId);
+        if (skin) shopItems.push({ skinId: skin.id, name: skin.name, rarity: skin.rarity, imageUrl: skin.imageUrl, price: SKIN_PRICE });
       }
       if (shopItems.length < 10) {
         const fill = await getRandomShopSkins(10 - shopItems.length);
@@ -3255,7 +3287,7 @@ const commands = [
       const userId = interaction.user.id;
       resetQuestsIfNeeded(userId); addInteraction(userId);
       const user = getUser(userId);
-      const allBundles = await getAllBundles();
+      const allBundles = [];
 
       const bundleSkinMap = {}; // skinId prefix → bundle name
       for (const bundle of allBundles) {
@@ -3687,7 +3719,7 @@ const commands = [
   {
     data: new SlashCommandBuilder()
       .setName("ebay")
-      .setDescription("List your skins on eBay — rocky_tyla WILL buy it!")
+      .setDescription("List your skins on eBay — rocky_serious WILL buy it!")
       .addStringOption(o => o.setName("name").setDescription("Listing title (optional)").setRequired(false))
       .addStringOption(o => o.setName("type").setDescription("What to sell").setRequired(false)
         .addChoices(
@@ -3769,7 +3801,7 @@ const commands = [
             try {
               addVbucks(userId, total);
               await interaction.followUp({
-                content: `<@${userId}> 🎉 **rocky_tyla** just paid **${total.toLocaleString()} V-Bucks** for your listing **"${listingName}"**! V-Bucks added to your account! 💰`,
+                content: `<@${userId}> 🎉 **rocky_serious** just paid **${total.toLocaleString()} V-Bucks** for your listing **"${listingName}"**! V-Bucks added to your account! 💰`,
               });
             } catch {}
           }, 30000);
@@ -3801,7 +3833,7 @@ const commands = [
         setTimeout(async () => {
           try {
             addVbucks(userId, total);
-            await interaction.followUp({ content: `<@${userId}> 🎉 **rocky_tyla** just paid **${total.toLocaleString()} V-Bucks** for your listing **"${listingName}"**! V-Bucks added to your account! 💰` });
+            await interaction.followUp({ content: `<@${userId}> 🎉 **rocky_serious** just paid **${total.toLocaleString()} V-Bucks** for your listing **"${listingName}"**! V-Bucks added to your account! 💰` });
           } catch {}
         }, 30000);
 
@@ -3820,7 +3852,7 @@ const commands = [
         });
         setTimeout(async () => {
           try {
-            await interaction.followUp({ content: `<@${userId}> 🎉 **rocky_tyla** just bought your entire account for **"${listingName}"**! The deal is done! 💰` });
+            await interaction.followUp({ content: `<@${userId}> 🎉 **rocky_serious** just bought your entire account for **"${listingName}"**! The deal is done! 💰` });
           } catch {}
         }, 30000);
       }
