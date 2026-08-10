@@ -168,6 +168,19 @@ function defaultUser() {
     stwQuestCompleted: [],
     hackedFreeShop: false,
     equippedSkins: [],
+    sprites: [],
+    equippedSprite: null,
+    spriteDust: 0,
+    graveyard: [],
+    stolenSprites: [],
+    unextractedSprites: [],
+    portableExtractors: 0,
+    lastSpriteChest: 0,
+    starterSpriteAvailable: true,
+    spriteCommandCount: 0,
+    grimLastUsed: 0,
+    freeSkinName: null,
+    creatorFreeSkinClaimed: false,
   };
 }
 
@@ -261,7 +274,8 @@ function addInteraction(userId) {
     user.vbucks = (user.vbucks || 0) + 250;
   }
   save();
-  return { gainedVbucks };
+  const spriteMessages = addSpriteCommandEffects(userId);
+  return { gainedVbucks, spriteMessages };
 }
 function addSkinToInventory(userId, skinId, skinName) {
   const user = getUser(userId);
@@ -272,10 +286,240 @@ function addSkinToInventory(userId, skinId, skinName) {
   save();
 }
 
+function removeSkinEntries(userId, keys) {
+  const user = getUser(userId);
+  const removeKeys = new Set(keys);
+  const removedNames = [];
+  for (const key of removeKeys) {
+    if (user.inventoryNames[key]) {
+      removedNames.push(user.inventoryNames[key]);
+      delete user.inventoryNames[key];
+    }
+  }
+  const remainingBaseIds = new Set(Object.keys(user.inventoryNames).map((key) => key.replace(/_\d+$/, "")));
+  user.inventory = (user.inventory ?? []).filter((id) => remainingBaseIds.has(id));
+  user.shopSkins = (user.shopSkins ?? []).filter((id) => user.inventory.includes(id));
+  if (user.equippedSkin && !user.inventory.includes(user.equippedSkin)) user.equippedSkin = null;
+  if (user.equippedSkins) user.equippedSkins = user.equippedSkins.filter((id) => remainingBaseIds.has(id.replace(/_\d+$/, "")));
+  save();
+  return removedNames;
+}
+
 function equipSkin(userId, skinId) {
   const user = getUser(userId);
   user.equippedSkin = skinId;
   save();
+}
+
+const SPRITE_VARIANTS = ["Normal", "Gold", "Gummy", "Galaxy", "Cube", "Gem"];
+const SPRITE_VARIANT_WEIGHTS = { Normal: 68, Gold: 10, Gummy: 8, Galaxy: 6, Cube: 4, Gem: 4 };
+const SPRITE_DEFINITIONS = [
+  { name: "Aura Sprite", rarity: "Common", ability: "Improves the odds of finding another common sprite." },
+  { name: "Boss Sprite", rarity: "Common", ability: "Harder to shoot while equipped." },
+  { name: "Demon Sprite", rarity: "Common", ability: "A dark aura gives a small luck boost to dangerous drops." },
+  { name: "Dream Sprite", rarity: "Rare", ability: "Every 35 commands can spawn a one-ammo weapon or a sprite." },
+  { name: "Duck Sprite", rarity: "Rare", ability: "10% extra chance to find guns." },
+  { name: "Ghost Sprite", rarity: "Epic", ability: "Shots made while equipped appear as Unknown." },
+  { name: "Grim Sprite", rarity: "Epic", ability: "Once every 15 minutes, instantly revives you and removes 4% of the shooter's dust." },
+  { name: "John Wick Sprite", rarity: "Epic", ability: "More accurate with pistols." },
+  { name: "King Sprite", rarity: "Legendary", ability: "Successful shots deal extra elimination time." },
+  { name: "Pollo Sprite", rarity: "Rare", ability: "Incoming shots have a 70% chance to miss." },
+  { name: "Punk Sprite", rarity: "Rare", ability: "Each command has a 3% chance to grant a weapon with 25 ammo." },
+  { name: "Seven Sprite", rarity: "Legendary", ability: "Foundations Power Gloves appear more often; gloves have an 80% obliteration chance." },
+  { name: "Striker Sprite", rarity: "Legendary", ability: "More likely to headshot and steal 5% of the target's sprite dust." },
+  { name: "Vini Jr. Sprite", rarity: "Epic", ability: "Extraction sites open in 15 seconds instead of 30." },
+  { name: "Zero Point Sprite", rarity: "Mythic", ability: "Better luck from /zeropoint, especially for ammo drops." },
+  { name: "Batman Sprite", rarity: "Epic", ability: "Has a 25% chance to block an incoming shot." },
+  { name: "Reece Sprite", rarity: "Epic", ability: "More accurate and less likely to miss with /shoot." },
+  { name: "Flash Sprite", rarity: "Legendary", ability: "Sprite chests can be opened every 5 minutes instead of 15." },
+  { name: "Clovel Sprite", rarity: "Rare", ability: "A little extra luck when opening sprite chests." },
+];
+const SPRITE_RARITY_WEIGHTS = { Common: 62, Rare: 22, Epic: 10, Legendary: 5, Mythic: 1 };
+const SPRITE_RARITY_EMOJI = { Common: "⚪", Rare: "🔵", Epic: "🟣", Legendary: "🟠", Mythic: "🔴" };
+const SPRITE_RARITY_COLOR = { Common: 0xbfc5cc, Rare: 0x3498db, Epic: 0x9b59b6, Legendary: 0xf39c12, Mythic: 0xe74c3c };
+
+function spriteUid() {
+  return `sprite_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+function spriteLabel(sprite) {
+  return `${sprite.variant ?? "Normal"} ${sprite.name}`;
+}
+function spriteDefinition(name) {
+  return SPRITE_DEFINITIONS.find((s) => s.name === name) ?? SPRITE_DEFINITIONS[0];
+}
+function weightedPick(entries) {
+  const total = entries.reduce((sum, entry) => sum + entry.weight, 0);
+  let rollValue = Math.random() * total;
+  for (const entry of entries) {
+    rollValue -= entry.weight;
+    if (rollValue <= 0) return entry.value;
+  }
+  return entries[entries.length - 1].value;
+}
+function rollSprite() {
+  const rarity = weightedPick(Object.entries(SPRITE_RARITY_WEIGHTS).map(([value, weight]) => ({ value, weight })));
+  const pool = SPRITE_DEFINITIONS.filter((s) => s.rarity === rarity);
+  const definition = pool[Math.floor(Math.random() * pool.length)] ?? SPRITE_DEFINITIONS[0];
+  const variant = weightedPick(Object.entries(SPRITE_VARIANT_WEIGHTS).map(([value, weight]) => ({ value, weight })));
+  return { uid: spriteUid(), name: definition.name, rarity: definition.rarity, ability: definition.ability, variant };
+}
+function addUnextractedSprite(userId, sprite) {
+  const user = getUser(userId);
+  user.unextractedSprites = [...(user.unextractedSprites ?? []), sprite];
+  save();
+}
+function addSpriteToCollection(userId, sprite) {
+  const user = getUser(userId);
+  if ((user.sprites ?? []).some((entry) => entry.uid === sprite.uid)) return;
+  user.sprites = [...(user.sprites ?? []), { ...sprite, uid: sprite.uid ?? spriteUid() }];
+  save();
+}
+function removeSpriteFromCollection(userId, uid) {
+  const user = getUser(userId);
+  const removed = (user.sprites ?? []).find((sprite) => sprite.uid === uid);
+  if (!removed) return null;
+  updateUser(userId, {
+    sprites: user.sprites.filter((sprite) => sprite.uid !== uid),
+    equippedSprite: user.equippedSprite === uid ? null : user.equippedSprite,
+  });
+  return removed;
+}
+function getEquippedSprite(userId) {
+  const user = getUser(userId);
+  return (user.sprites ?? []).find((sprite) => sprite.uid === user.equippedSprite) ?? null;
+}
+function spriteDustValue(sprite) {
+  const isMythic = sprite.rarity === "Mythic";
+  const isVariant = sprite.variant && sprite.variant !== "Normal";
+  let value = isMythic ? (isVariant ? 7500 : 3000) : (isVariant ? 3000 : 1500);
+  if (sprite.variant === "Cube" || sprite.variant === "Gem") value += isMythic ? 3000 : 1500;
+  return value;
+}
+function spriteRarityRollLine(sprite) {
+  return `${SPRITE_RARITY_EMOJI[sprite.rarity] ?? "⚪"} **${spriteLabel(sprite)}** — ${sprite.rarity}\n> ${sprite.ability}`;
+}
+function spriteSourceEntries(user) {
+  const entries = [];
+  for (const sprite of (user.unextractedSprites ?? [])) entries.push({ ...sprite, source: "unextracted" });
+  for (const sprite of (user.stolenSprites ?? [])) entries.push({ ...sprite, source: "stolen" });
+  const equipped = (user.sprites ?? []).find((sprite) => sprite.uid === user.equippedSprite);
+  if (equipped) entries.push({ ...equipped, source: "equipped" });
+  return entries;
+}
+function consumeSpriteSource(userId, uid) {
+  const user = getUser(userId);
+  const unextracted = (user.unextractedSprites ?? []).find((sprite) => sprite.uid === uid);
+  if (unextracted) {
+    updateUser(userId, { unextractedSprites: user.unextractedSprites.filter((sprite) => sprite.uid !== uid) });
+    return unextracted;
+  }
+  const stolen = (user.stolenSprites ?? []).find((sprite) => sprite.uid === uid);
+  if (stolen) {
+    updateUser(userId, { stolenSprites: user.stolenSprites.filter((sprite) => sprite.uid !== uid) });
+    return stolen;
+  }
+  const equipped = (user.sprites ?? []).find((sprite) => sprite.uid === uid && user.equippedSprite === uid);
+  if (equipped) {
+    updateUser(userId, {
+      sprites: user.sprites.filter((sprite) => sprite.uid !== uid),
+      equippedSprite: null,
+    });
+    return equipped;
+  }
+  return null;
+}
+function spriteHas(userId, name) {
+  return !!(getUser(userId).sprites ?? []).find((sprite) => sprite.name === name);
+}
+function spriteEquipped(userId, name) {
+  return getEquippedSprite(userId)?.name === name;
+}
+function spriteChestCooldown(userId) {
+  return spriteEquipped(userId, "Flash Sprite") ? 5 * 60 * 1000 : 15 * 60 * 1000;
+}
+function addSpriteCommandEffects(userId) {
+  const user = getUser(userId);
+  const equipped = getEquippedSprite(userId);
+  const count = (user.spriteCommandCount ?? 0) + 1;
+  const updates = { spriteCommandCount: count };
+  const messages = [];
+  if (equipped?.name === "Dream Sprite" && count % 35 === 0) {
+    if (Math.random() < 0.5) {
+      const weapon = randomWeapon();
+      updates.weapons = [...(user.weapons ?? []), weapon.name];
+      messages.push(`🌙 Dream Sprite found **${weapon.name}** with 1 ammo.`);
+    } else {
+      const found = rollSprite();
+      updates.unextractedSprites = [...(user.unextractedSprites ?? []), found];
+      messages.push(`🌙 Dream Sprite discovered **${spriteLabel(found)}**. Extract it with \`/extraction\`.`);
+    }
+  }
+  if (equipped?.name === "Punk Sprite" && Math.random() < 0.03) {
+    const weapon = randomWeapon();
+    updates.weapons = [...(updates.weapons ?? user.weapons ?? []), ...Array(25).fill(weapon.name)];
+    messages.push(`🎸 Punk Sprite bonus: **${weapon.name} × 25 ammo**.`);
+  }
+  if (equipped?.name === "Duck Sprite" && Math.random() < 0.10) {
+    const weapon = randomWeapon();
+    updates.weapons = [...(updates.weapons ?? user.weapons ?? []), weapon.name];
+    messages.push(`🦆 Duck Sprite bonus: found **${weapon.name}**.`);
+  }
+  if (equipped?.name === "Seven Sprite" && Math.random() < 0.06) {
+    updates.weapons = [...(updates.weapons ?? user.weapons ?? []), "Foundations Power Gloves"];
+    messages.push("🧤 Seven Sprite bonus: found **Foundations Power Gloves** with 1 ammo.");
+  }
+  if (Object.keys(updates).length > 0) updateUser(userId, updates);
+  return messages;
+}
+function dropEquippedSprite(userId, attackerId, reason = "shot") {
+  const target = getUser(userId);
+  const equipped = getEquippedSprite(userId);
+  if (!equipped) return null;
+  target.sprites = (target.sprites ?? []).filter((sprite) => sprite.uid !== equipped.uid);
+  target.equippedSprite = null;
+  target.graveyard = [...(target.graveyard ?? []), {
+    ...equipped,
+    droppedAt: Date.now(),
+    droppedBy: attackerId,
+    reason,
+  }];
+  save();
+  return equipped;
+}
+function starterSpriteRoll() {
+  if (roll(1)) {
+    return { ...rollSprite(), rarity: "Mythic", name: "Zero Point Sprite", ability: spriteDefinition("Zero Point Sprite").ability };
+  }
+  const name = weightedPick([
+    { value: "Aura Sprite", weight: 40 },
+    { value: "Demon Sprite", weight: 35 },
+    { value: "Boss Sprite", weight: 25 },
+  ]);
+  const definition = spriteDefinition(name);
+  return { uid: spriteUid(), name: definition.name, rarity: definition.rarity, ability: definition.ability, variant: weightedPick(Object.entries(SPRITE_VARIANT_WEIGHTS).map(([value, weight]) => ({ value, weight }))) };
+}
+function sourceDisplayEntries(user) {
+  const seen = new Set();
+  return spriteSourceEntries(user).filter((sprite) => {
+    if (seen.has(sprite.uid)) return false;
+    seen.add(sprite.uid);
+    return true;
+  });
+}
+function handleDownedSprite(targetId, attackerId) {
+  const target = getUser(targetId);
+  const equipped = getEquippedSprite(targetId);
+  if (equipped?.name === "Grim Sprite" && (target.grimLastUsed ?? 0) + 15 * 60 * 1000 <= Date.now()) {
+    const attacker = getUser(attackerId);
+    const dustLost = Math.floor((attacker.spriteDust ?? 0) * 0.04);
+    if (dustLost > 0) {
+      updateUser(attackerId, { spriteDust: Math.max(0, (attacker.spriteDust ?? 0) - dustLost) });
+      updateUser(targetId, { spriteDust: (target.spriteDust ?? 0) + dustLost });
+    }
+    updateUser(targetId, { eliminatedUntil: 0, grimLastUsed: Date.now() });
+    return { revived: true, sprite: equipped, dustLost };
+  }
+  return { revived: false, sprite: dropEquippedSprite(targetId, attackerId, "shot"), dustLost: 0 };
 }
 
 function getLocker(userId) {
@@ -640,6 +884,7 @@ const BP_REWARDS = [
 ];
 const VALID_CODES = {
   tylajadee:      { displayName: "Tylajadee",      discount: 0.1, freeSkin: true, profitUserId: "794579608170659840" },
+  reecebamford:   { displayName: "reecebamford",   discount: 0.1, freeSkinName: "Chaos Agent" },
   ultravioletkaty:{ displayName: "ultravioletkaty", discount: 0.1 },
   clovel:         { displayName: "Clovel",          discount: 0.2 },
   beccal0uise:    { displayName: "beccal0uise",     discount: 0.1 },
@@ -1243,9 +1488,296 @@ const activeDiscounts = new Map(); // key: skinId, value: { percent, expiresAt, 
 
 const commands = [
 
-
-
-
+  {
+    data: new SlashCommandBuilder().setName("sprites").setDescription("View every sprite and your owned variants"),
+    async execute(interaction) {
+      const userId = interaction.user.id;
+      const user = getUser(userId);
+      const owned = user.sprites ?? [];
+      const ownedByName = new Map();
+      for (const sprite of owned) {
+        if (!ownedByName.has(sprite.name)) ownedByName.set(sprite.name, []);
+        ownedByName.get(sprite.name).push(sprite);
+      }
+      const lines = SPRITE_DEFINITIONS.map((definition) => {
+        const entries = ownedByName.get(definition.name) ?? [];
+        if (!entries.length) return `**${definition.name}** — ${definition.rarity} · X`;
+        const variants = entries.map((sprite) => `${sprite.variant ?? "Normal"}${sprite.uid === user.equippedSprite ? " ✅" : ""}`).join(", ");
+        return `✅ **${definition.name}** — ${definition.rarity} · ${variants}`;
+      });
+      await interaction.reply({
+        embeds: [new EmbedBuilder()
+          .setTitle(`🧬 ${interaction.user.username}'s Sprite Index`)
+          .setDescription(`${lines.join("\n")}\n\n**Equipped:** ${getEquippedSprite(userId) ? spriteLabel(getEquippedSprite(userId)) : "None"}\n**Sprite Dust:** ${(user.spriteDust ?? 0).toLocaleString()}\n\n*X means you do not own that sprite. Use \`/extraction\` for loose sprites.*`)
+          .setColor(0x7d5fff).setTimestamp()],
+      });
+      if (!owned.length && user.starterSpriteAvailable) {
+        const starterMsg = await interaction.followUp({
+          content: `<@${userId}> You do not own any sprites yet. You are eligible for a starter sprite box!`,
+          components: [new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId(`sprite_starter_open_${userId}`).setLabel("Open Starter Sprite Box").setStyle(ButtonStyle.Success)
+          )],
+          fetchReply: true,
+        });
+        const starterCol = starterMsg.createMessageComponentCollector({
+          componentType: ComponentType.Button,
+          time: 60000,
+          filter: (button) => button.user.id === userId,
+        });
+        starterCol.on("collect", async (button) => {
+          const fresh = getUser(userId);
+          if (!fresh.starterSpriteAvailable || (fresh.sprites ?? []).length) {
+            await button.update({ content: "❌ Your starter box has already been opened.", components: [] });
+            starterCol.stop();
+            return;
+          }
+          const reward = starterSpriteRoll();
+          updateUser(userId, { starterSpriteAvailable: false, unextractedSprites: [...(fresh.unextractedSprites ?? []), reward] });
+          await button.update({ content: `📦 Starter box opened! You found **${spriteLabel(reward)}**.\n\nUse \`/extraction\` to claim it into your sprite index.`, components: [] });
+          starterCol.stop();
+        });
+      }
+    },
+  },
+  {
+    data: new SlashCommandBuilder().setName("equipsprite").setDescription("Equip one of your owned sprites").addStringOption((o) => o.setName("sprite").setDescription("Sprite name or variant").setRequired(true).setAutocomplete(true)),
+    autocomplete: async (interaction) => {
+      const focused = interaction.options.getFocused().toLowerCase();
+      const owned = getUser(interaction.user.id).sprites ?? [];
+      await interaction.respond(owned.filter((sprite) => `${sprite.variant} ${sprite.name}`.toLowerCase().includes(focused)).slice(0, 25).map((sprite) => ({
+        name: `${spriteLabel(sprite)}${sprite.uid === getUser(interaction.user.id).equippedSprite ? " (equipped)" : ""}`.slice(0, 100),
+        value: sprite.uid,
+      })));
+    },
+    async execute(interaction) {
+      const userId = interaction.user.id;
+      const value = interaction.options.getString("sprite", true);
+      const user = getUser(userId);
+      const sprite = (user.sprites ?? []).find((entry) => entry.uid === value || spriteLabel(entry).toLowerCase() === value.toLowerCase() || entry.name.toLowerCase() === value.toLowerCase());
+      if (!sprite) return interaction.reply({ content: "❌ You do not own that sprite. Check `/sprites` first.", ephemeral: true });
+      updateUser(userId, { equippedSprite: sprite.uid });
+      await interaction.reply({ embeds: [new EmbedBuilder().setTitle("✅ Sprite Equipped").setDescription(`**${spriteLabel(sprite)}** is now equipped.\n\n> ${sprite.ability}`).setColor(SPRITE_RARITY_COLOR[sprite.rarity] ?? 0x7d5fff).setTimestamp()] });
+    },
+  },
+  {
+    data: new SlashCommandBuilder().setName("graveyard").setDescription("View sprites dropped after players were shot"),
+    async execute(interaction) {
+      const userId = interaction.user.id;
+      const user = getUser(userId);
+      const graveyard = user.graveyard ?? [];
+      if (!graveyard.length) return interaction.reply({ embeds: [new EmbedBuilder().setTitle("🪦 Sprite Graveyard").setDescription("Your graveyard is empty.\n\nSprites dropped in combat will appear here.").setColor(0x555b66).setTimestamp()] });
+      const options = graveyard.slice(0, 25).map((sprite) => new StringSelectMenuOptionBuilder().setLabel(spriteLabel(sprite).slice(0, 100)).setDescription(`${sprite.rarity} · revive for ${spriteDustValue(sprite).toLocaleString()} dust`).setValue(sprite.uid));
+      const msg = await interaction.reply({
+        embeds: [new EmbedBuilder().setTitle("🪦 Sprite Graveyard").setDescription(`${graveyard.map((sprite) => `${spriteRarityRollLine(sprite)}\n> Revive value: **${spriteDustValue(sprite).toLocaleString()} Sprite Dust**`).join("\n\n")}\n\nSelect a sprite to revive for dust. Other players can use \`/steal\` before you revive it.`).setColor(0x596275).setTimestamp()],
+        components: [new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId(`graveyard_revive_${userId}`).setPlaceholder("Revive one sprite for Sprite Dust...").addOptions(options))],
+        fetchReply: true,
+      });
+      const col = msg.createMessageComponentCollector({ componentType: ComponentType.StringSelect, time: 60000, filter: (select) => select.user.id === userId });
+      col.on("collect", async (select) => {
+        const fresh = getUser(userId);
+        const index = (fresh.graveyard ?? []).findIndex((sprite) => sprite.uid === select.values[0]);
+        if (index === -1) return select.update({ content: "❌ That sprite is no longer in the graveyard.", embeds: [], components: [] });
+        const [sprite] = fresh.graveyard.splice(index, 1);
+        const dust = spriteDustValue(sprite);
+        updateUser(userId, { graveyard: fresh.graveyard, spriteDust: (fresh.spriteDust ?? 0) + dust });
+        await select.update({ embeds: [new EmbedBuilder().setTitle("✨ Sprite Revived").setDescription(`You revived **${spriteLabel(sprite)}** for **${dust.toLocaleString()} Sprite Dust**.\n\nUse dust in \`/dustshop\`.`).setColor(0x2ecc71).setTimestamp()], components: [] });
+        col.stop();
+      });
+    },
+  },
+  {
+    data: new SlashCommandBuilder().setName("steal").setDescription("Steal a dropped sprite from another player's graveyard").addUserOption((o) => o.setName("player").setDescription("Player whose graveyard to search").setRequired(true)),
+    async execute(interaction) {
+      const userId = interaction.user.id;
+      const target = interaction.options.getUser("player", true);
+      if (target.id === userId || target.bot) return interaction.reply({ content: "❌ Choose another real player.", ephemeral: true });
+      const targetUser = getUser(target.id);
+      const graveyard = targetUser.graveyard ?? [];
+      if (!graveyard.length) return interaction.reply({ content: `❌ **${target.username}** has no dropped sprites in their graveyard.`, ephemeral: true });
+      const options = graveyard.slice(0, 25).map((sprite) => new StringSelectMenuOptionBuilder().setLabel(spriteLabel(sprite).slice(0, 100)).setDescription(`${sprite.rarity} · must be extracted after stealing`).setValue(sprite.uid));
+      const msg = await interaction.reply({
+        content: `<@${target.id}>`,
+        embeds: [new EmbedBuilder().setTitle("🕵️ Choose a Sprite to Steal").setDescription(`**${target.username}** has dropped sprites available.\n\nStealing only moves the sprite to your unextracted stash. Use \`/extraction\` to claim it permanently.`).setColor(0xff8c42).setTimestamp()],
+        components: [new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId(`steal_select_${userId}`).setPlaceholder("Choose a dropped sprite...").addOptions(options))],
+        fetchReply: true,
+      });
+      const col = msg.createMessageComponentCollector({ componentType: ComponentType.StringSelect, time: 60000, filter: (select) => select.user.id === userId });
+      col.on("collect", async (select) => {
+        const victim = getUser(target.id);
+        const index = (victim.graveyard ?? []).findIndex((sprite) => sprite.uid === select.values[0]);
+        if (index === -1) return select.update({ content: "❌ Someone already took that sprite.", embeds: [], components: [] });
+        const [sprite] = victim.graveyard.splice(index, 1);
+        const thief = getUser(userId);
+        updateUser(target.id, { graveyard: victim.graveyard });
+        updateUser(userId, { stolenSprites: [...(thief.stolenSprites ?? []), { ...sprite, stolenBy: userId, stolenAt: Date.now() }] });
+        await select.update({ embeds: [new EmbedBuilder().setTitle("🕵️ Sprite Stolen").setDescription(`You stole **${spriteLabel(sprite)}** from **${target.username}**.\n\nIt is not yours yet. Use \`/extraction\` to extract it.`).setColor(0xff8c42).setTimestamp()], components: [] });
+        col.stop();
+      });
+    },
+  },
+  {
+    data: new SlashCommandBuilder().setName("extraction").setDescription("Open an extraction site to claim loose sprites"),
+    async execute(interaction) {
+      const userId = interaction.user.id;
+      const user = getUser(userId);
+      const sources = sourceDisplayEntries(user);
+      if (!sources.length) return interaction.reply({ content: "❌ You have no loose, stolen, or equipped sprites waiting for extraction.", ephemeral: true });
+      const delay = spriteEquipped(userId, "Vini Jr. Sprite") ? 15000 : 30000;
+      await interaction.reply({ embeds: [new EmbedBuilder().setTitle("🚁 Extraction Site Spawning").setDescription(`The extraction site is arriving. It will be ready in **${delay / 1000} seconds**.\n\nKeep your loose sprites safe.`).setColor(0x00a8ff).setTimestamp()] });
+      setTimeout(async () => {
+        try {
+          const current = sourceDisplayEntries(getUser(userId));
+          if (!current.length) return interaction.followUp({ content: `<@${userId}> ❌ The extraction site arrived, but you have no sprites left to extract.` });
+          const options = current.slice(0, 25).map((sprite) => new StringSelectMenuOptionBuilder().setLabel(spriteLabel(sprite).slice(0, 100)).setDescription(`${sprite.source} · ${sprite.rarity}`).setValue(sprite.uid));
+          const crate = await interaction.followUp({
+            content: `<@${userId}>`,
+            embeds: [new EmbedBuilder().setTitle("📦 Extraction Crate Dropped").setDescription("The crate has landed. Select one or more sprites, then press **Extract Sprite**. The crate remains open for **15 seconds**.").setColor(0x2ecc71).setTimestamp()],
+            components: [
+              new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId(`extract_select_${userId}`).setPlaceholder("Select sprites to extract...").setMinValues(1).setMaxValues(Math.min(current.length, 25)).addOptions(options)),
+              new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`extract_confirm_${userId}`).setLabel("Extract Sprite").setStyle(ButtonStyle.Success)),
+            ],
+            fetchReply: true,
+          });
+          let selected = [];
+          const col = crate.createMessageComponentCollector({ time: 15000, filter: (component) => component.user.id === userId });
+          col.on("collect", async (component) => {
+            if (component.isStringSelectMenu()) {
+              selected = component.values;
+              await component.deferUpdate();
+              return;
+            }
+            if (component.isButton() && component.customId === `extract_confirm_${userId}`) {
+              if (!selected.length) return component.reply({ content: "❌ Select at least one sprite first.", ephemeral: true });
+              const extracted = selected.map((uid) => consumeSpriteSource(userId, uid)).filter(Boolean);
+              const fresh = getUser(userId);
+              for (const sprite of extracted) addSpriteToCollection(userId, sprite);
+              await component.update({ embeds: [new EmbedBuilder().setTitle("✅ Sprite Extraction Complete").setDescription(`You extracted:\n${extracted.map((sprite) => `• **${spriteLabel(sprite)}**`).join("\n")}\n\nThey are now in your sprite index.`).setColor(0x2ecc71).setTimestamp()], components: [] });
+              col.stop("extracted");
+            }
+          });
+          col.on("end", (_, reason) => {
+            if (reason === "time") crate.edit({ content: `<@${userId}> ⏰ The extraction crate has left.`, components: [] }).catch(() => {});
+          });
+        } catch (error) {
+          console.error("[sprite extraction]", error);
+        }
+      }, delay);
+    },
+  },
+  {
+    data: new SlashCommandBuilder().setName("spritechest").setDescription("Open a sprite chest every 15 minutes"),
+    async execute(interaction) {
+      const userId = interaction.user.id;
+      const user = getUser(userId);
+      const left = (user.lastSpriteChest ?? 0) + spriteChestCooldown(userId) - Date.now();
+      if (left > 0) return interaction.reply({ content: `⏳ Your sprite chest is still locked. Try again in **${Math.ceil(left / 60000)} minute(s)**.`, ephemeral: true });
+      const msg = await interaction.reply({
+        embeds: [new EmbedBuilder().setTitle("🧰 Sprite Chest").setDescription(`Your chest is ready.\n\nOpen it to discover a sprite. New sprites arrive loose and must be extracted with \`/extraction\`.`).setColor(0x8e44ad).setTimestamp()],
+        components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`sprite_chest_open_${userId}`).setLabel("Open Sprite Chest").setStyle(ButtonStyle.Primary))],
+        fetchReply: true,
+      });
+      const col = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 60000, filter: (button) => button.user.id === userId });
+      col.on("collect", async (button) => {
+        const fresh = getUser(userId);
+        const cooldown = spriteChestCooldown(userId);
+        if ((fresh.lastSpriteChest ?? 0) + cooldown > Date.now()) return button.update({ content: "❌ This chest was already opened.", embeds: [], components: [] });
+        const reward = rollSprite();
+        if (spriteEquipped(userId, "Clover Sprite") && Math.random() < 0.15) reward.variant = weightedPick([{ value: "Gold", weight: 30 }, { value: "Gummy", weight: 25 }, { value: "Galaxy", weight: 20 }, { value: "Cube", weight: 15 }, { value: "Gem", weight: 10 }]);
+        updateUser(userId, { lastSpriteChest: Date.now(), unextractedSprites: [...(fresh.unextractedSprites ?? []), reward] });
+        await button.update({ embeds: [new EmbedBuilder().setTitle("🎉 Sprite Chest Opened").setDescription(`You found **${spriteLabel(reward)}**!\n\n${spriteRarityRollLine(reward)}\n\nUse \`/extraction\` to add it to your sprite index.`).setColor(SPRITE_RARITY_COLOR[reward.rarity] ?? 0x8e44ad).setTimestamp()], components: [] });
+        col.stop();
+      });
+    },
+  },
+  {
+    data: new SlashCommandBuilder().setName("portable").setDescription("Use one Portable Extractor on a loose sprite"),
+    async execute(interaction) {
+      const userId = interaction.user.id;
+      const user = getUser(userId);
+      if ((user.portableExtractors ?? 0) <= 0) return interaction.reply({ content: "❌ You do not own a **Portable Extractor**. Buy one in `/dustshop`.", ephemeral: true });
+      const sources = sourceDisplayEntries(user);
+      if (!sources.length) return interaction.reply({ content: "❌ You have no stolen or loose sprites for the Portable Extractor.", ephemeral: true });
+      const options = sources.slice(0, 25).map((sprite) => new StringSelectMenuOptionBuilder().setLabel(spriteLabel(sprite).slice(0, 100)).setDescription(`${sprite.source} · ${sprite.rarity}`).setValue(sprite.uid));
+      const msg = await interaction.reply({ embeds: [new EmbedBuilder().setTitle("🧪 Portable Extractor").setDescription("Select exactly one sprite. The portable will be consumed immediately.").setColor(0x16a085).setTimestamp()], components: [new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId(`portable_select_${userId}`).setPlaceholder("Choose one sprite...").addOptions(options))], fetchReply: true });
+      const col = msg.createMessageComponentCollector({ componentType: ComponentType.StringSelect, time: 60000, filter: (select) => select.user.id === userId });
+      col.on("collect", async (select) => {
+        const fresh = getUser(userId);
+        if ((fresh.portableExtractors ?? 0) <= 0) return select.update({ content: "❌ You no longer have a Portable Extractor.", embeds: [], components: [] });
+        const sprite = consumeSpriteSource(userId, select.values[0]);
+        if (!sprite) return select.update({ content: "❌ That sprite is no longer available.", embeds: [], components: [] });
+        updateUser(userId, { portableExtractors: fresh.portableExtractors - 1 });
+        addSpriteToCollection(userId, sprite);
+        await select.update({ embeds: [new EmbedBuilder().setTitle("✅ Portable Extraction Complete").setDescription(`**${spriteLabel(sprite)}** is now in your sprite index.\n\n🧪 Portable Extractors left: **${Math.max(0, fresh.portableExtractors - 1)}**`).setColor(0x16a085).setTimestamp()], components: [] });
+        col.stop();
+      });
+    },
+  },
+  {
+    data: new SlashCommandBuilder().setName("dustshop").setDescription("Spend Sprite Dust on extractors, V-Buck packs, or random sprites"),
+    async execute(interaction) {
+      const userId = interaction.user.id;
+      const user = getUser(userId);
+      const random = rollSprite();
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`dust_extractor_${userId}`).setLabel("Portable Extractor · 4,500 Dust").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(`dust_vbucks_${userId}`).setLabel("V-Buck Packs").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`dust_random_${userId}`).setLabel(`Random Sprite · 5,000 Dust`).setStyle(ButtonStyle.Secondary),
+      );
+      const msg = await interaction.reply({ embeds: [new EmbedBuilder().setTitle("🛒 Sprite Dust Shop").setDescription(`**Your Sprite Dust:** ${(user.spriteDust ?? 0).toLocaleString()}\n\n🧪 **Portable Extractor** — 4,500 Dust\n💰 **V-Buck Packs** — 1,000 V-Bucks for 1,500 Dust or 2,000 V-Bucks for 2,700 Dust\n🎲 **Random Sprite** — 5,000 Dust\n\nThe random offer is selected when you open the shop and arrives loose, so it must be extracted.`).setColor(0xf1c40f).setTimestamp()], components: [row], fetchReply: true });
+      const col = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 120000, filter: (button) => button.user.id === userId });
+      col.on("collect", async (button) => {
+        const fresh = getUser(userId);
+        if (button.customId === `dust_extractor_${userId}`) {
+          if ((fresh.spriteDust ?? 0) < 4500) return button.reply({ content: "❌ You need 4,500 Sprite Dust.", ephemeral: true });
+          updateUser(userId, { spriteDust: fresh.spriteDust - 4500, portableExtractors: (fresh.portableExtractors ?? 0) + 1 });
+          await button.update({ embeds: [new EmbedBuilder().setTitle("🧪 Portable Extractor Purchased").setDescription("Your Portable Extractor has been added to your inventory.").setColor(0x16a085).setTimestamp()], components: [] });
+          col.stop();
+        } else if (button.customId === `dust_random_${userId}`) {
+          if ((fresh.spriteDust ?? 0) < 5000) return button.reply({ content: "❌ You need 5,000 Sprite Dust.", ephemeral: true });
+          updateUser(userId, { spriteDust: fresh.spriteDust - 5000, unextractedSprites: [...(fresh.unextractedSprites ?? []), random] });
+          await button.update({ embeds: [new EmbedBuilder().setTitle("🎲 Random Sprite Purchased").setDescription(`The shop selected **${spriteLabel(random)}**.\n\nUse \`/extraction\` to claim it.`).setColor(SPRITE_RARITY_COLOR[random.rarity] ?? 0xf1c40f).setTimestamp()], components: [] });
+          col.stop();
+        } else if (button.customId === `dust_vbucks_${userId}`) {
+          await button.update({ embeds: [new EmbedBuilder().setTitle("💰 Choose a V-Buck Pack").setDescription("Select a pack to buy with Sprite Dust.").setColor(0x00d4ff).setTimestamp()], components: [new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId(`dust_pack_${userId}`).setPlaceholder("Choose a V-Buck pack...").addOptions(
+            new StringSelectMenuOptionBuilder().setLabel("1,000 V-Bucks — 1,500 Dust").setValue("1000"),
+            new StringSelectMenuOptionBuilder().setLabel("2,000 V-Bucks — 2,700 Dust").setValue("2000"),
+          ))] });
+        }
+      });
+      const selectCol = msg.createMessageComponentCollector({ componentType: ComponentType.StringSelect, time: 120000, filter: (select) => select.user.id === userId && select.customId === `dust_pack_${userId}` });
+      selectCol.on("collect", async (select) => {
+        const amount = Number(select.values[0]), cost = amount === 1000 ? 1500 : 2700, fresh = getUser(userId);
+        if ((fresh.spriteDust ?? 0) < cost) return select.reply({ content: `❌ You need ${cost.toLocaleString()} Sprite Dust.`, ephemeral: true });
+        updateUser(userId, { spriteDust: fresh.spriteDust - cost });
+        addVbucks(userId, amount);
+        await select.update({ embeds: [new EmbedBuilder().setTitle("✅ V-Bucks Purchased").setDescription(`You bought **${amount.toLocaleString()} V-Bucks** for **${cost.toLocaleString()} Sprite Dust**.`).setColor(0x00d4ff).setTimestamp()], components: [] });
+        col.stop();
+        selectCol.stop();
+      });
+    },
+  },
+  {
+    data: new SlashCommandBuilder().setName("deleteskin").setDescription("Delete one or more skins from your locker").addBooleanOption((o) => o.setName("all").setDescription("Delete every skin in your locker").setRequired(false)),
+    async execute(interaction) {
+      const userId = interaction.user.id;
+      const user = getUser(userId);
+      const entries = Object.entries(user.inventoryNames ?? {});
+      if (!entries.length) return interaction.reply({ content: "❌ Your locker is already empty.", ephemeral: true });
+      if (interaction.options.getBoolean("all")) {
+        const count = entries.length;
+        removeSkinEntries(userId, entries.map(([key]) => key));
+        return interaction.reply({ embeds: [new EmbedBuilder().setTitle("🗑️ Locker Cleared").setDescription(`Deleted **${count} skin(s)** from your locker.`).setColor(0xff4444).setTimestamp()] });
+      }
+      const options = entries.slice(0, 25).map(([key, name]) => new StringSelectMenuOptionBuilder().setLabel(name.slice(0, 100)).setValue(key));
+      const msg = await interaction.reply({ embeds: [new EmbedBuilder().setTitle("🗑️ Delete a Skin").setDescription("Choose the skin to permanently remove.").setColor(0xff4444).setTimestamp()], components: [new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId(`delete_skin_${userId}`).setPlaceholder("Choose a skin...").addOptions(options))], fetchReply: true });
+      const col = msg.createMessageComponentCollector({ componentType: ComponentType.StringSelect, time: 60000, filter: (select) => select.user.id === userId });
+      col.on("collect", async (select) => {
+        const removed = removeSkinEntries(userId, [select.values[0]]);
+        await select.update({ embeds: [new EmbedBuilder().setTitle("🗑️ Skin Deleted").setDescription(removed.length ? `Removed **${removed[0]}** from your locker.` : "That skin was already removed.").setColor(0xff4444).setTimestamp()], components: [] });
+        col.stop();
+      });
+    },
+  },
   {
     data: new SlashCommandBuilder().setName("setup").setDescription("Set the channel where Fortnite skins will spawn").addChannelOption((o) => o.setName("channel").setDescription("Text channel for spawns").addChannelTypes(ChannelType.GuildText).setRequired(true)),
     async execute(interaction) {
@@ -1994,7 +2526,7 @@ const commands = [
   },
 
   {
-    data: new SlashCommandBuilder().setName("attack").setDescription("Attack another player with a weapon from your arsenal").addUserOption((o) => o.setName("target").setDescription("Player to attack").setRequired(true)).addStringOption((o) => o.setName("weapon").setDescription("Weapon to use").setRequired(true).setAutocomplete(true)),
+    data: new SlashCommandBuilder().setName("shoot").setDescription("Shoot another player with a weapon from your arsenal").addUserOption((o) => o.setName("target").setDescription("Player to shoot").setRequired(true)).addStringOption((o) => o.setName("weapon").setDescription("Weapon to use").setRequired(true).setAutocomplete(true)),
     autocomplete: async (interaction) => {
       const userId = interaction.user.id, user = getUser(userId), focused = interaction.options.getFocused().toLowerCase();
       const weapons = [...(user.weapons??[])], unique = [...new Set(weapons)];
@@ -2015,7 +2547,15 @@ const commands = [
       const newWeapons = [...weapons]; let removed = 0;
       for (let i = newWeapons.length-1; i >= 0 && removed < usedAmmo; i--) { if (newWeapons[i].toLowerCase() === weaponName.toLowerCase()) { newWeapons.splice(i, 1); removed++; } }
       updateUser(userId, { weapons: newWeapons });
-      const HIT_CHANCE = 0.25;
+      const equippedAttackerSprite = getEquippedSprite(userId);
+      const targetSprite = getEquippedSprite(target.id);
+      let HIT_CHANCE = 0.25;
+      if (equippedAttackerSprite?.name === "Reece Sprite") HIT_CHANCE += 0.12;
+      if (equippedAttackerSprite?.name === "John Wick Sprite" && getWeaponByName(weaponName)?.type === "pistol") HIT_CHANCE += 0.15;
+      if (equippedAttackerSprite?.name === "Striker Sprite") HIT_CHANCE += 0.08;
+      if (targetSprite?.name === "Boss Sprite" && Math.random() < 0.25) HIT_CHANCE -= 0.15;
+      if (targetSprite?.name === "Pollo Sprite" && Math.random() < 0.70) HIT_CHANCE = 0;
+      if (targetSprite?.name === "Batman Sprite" && Math.random() < 0.25) HIT_CHANCE = 0;
       const targetUser = getUser(target.id);
       const hasShield = (targetUser.buildCharges??0) > 0;
       if (isMulti && usedAmmo > 1) {
@@ -2030,10 +2570,24 @@ const commands = [
         }
         const shieldLine = shieldAbsorbed > 0 ? `\n\n🏗️ **${target.username}'s ${BUILD_MATS[targetUser.buildMaterial]?.label ?? "structure"} absorbed ${shieldAbsorbed} hit(s)!**` : "";
         if (hits > 0) {
-          const elimMs = Math.min(hits*10*60*1000, 120*60*1000);
+          const kingBonus = equippedAttackerSprite?.name === "King Sprite" ? 5 : 0;
+          const elimMs = Math.min(hits*(10 + kingBonus)*60*1000, 120*60*1000);
           const existing = (getUser(target.id).eliminatedUntil??0) > Date.now() ? getUser(target.id).eliminatedUntil : Date.now();
           updateUser(target.id, { eliminatedUntil: existing + elimMs });
-          await interaction.editReply({ embeds: [new EmbedBuilder().setTitle(`${emoji} ${interaction.user.username} unloaded on ${target.username}!`).setDescription(`Fired **${usedAmmo} rounds** of **${weaponName}**!\n\n📊 **${hits} hit(s), ${misses} miss(es)** *(+${shieldAbsorbed} blocked)*${shieldLine}\n\n☠️ **${target.username}** eliminated for **${Math.round(elimMs/60000)} minutes!**\n\`/reboot\` for **299 V-Bucks**.`).setColor(0xff0000).setThumbnail(target.displayAvatarURL()).setTimestamp()] });
+          const downedSprite = handleDownedSprite(target.id, userId);
+          const dropped = downedSprite.sprite;
+          if (downedSprite.revived) await interaction.channel?.send({ content: `<@${target.id}> 🖤 Your **Grim Sprite** revived you instantly and cursed the shooter. **${downedSprite.dustLost.toLocaleString()} Sprite Dust** was transferred.` }).catch(() => {});
+          else if (dropped) await interaction.channel?.send({ content: `<@${target.id}> 🪦 You dropped your equipped **${spriteLabel(dropped)}** after being shot. Someone can use \`/steal player:${target.username}\` before it is revived.` }).catch(() => {});
+          let dustStolen = 0;
+          if (equippedAttackerSprite?.name === "Striker Sprite" && roll(25)) {
+            const targetDust = getUser(target.id);
+            dustStolen = Math.floor((targetDust.spriteDust ?? 0) * 0.05);
+            if (dustStolen > 0) {
+              updateUser(target.id, { spriteDust: Math.max(0, targetDust.spriteDust - dustStolen) });
+              updateUser(userId, { spriteDust: (getUser(userId).spriteDust ?? 0) + dustStolen });
+            }
+          }
+          await interaction.editReply({ embeds: [new EmbedBuilder().setTitle(`${emoji} ${interaction.user.username} unloaded on ${target.username}!`).setDescription(`Fired **${usedAmmo} rounds** of **${weaponName}**!\n\n📊 **${hits} hit(s), ${misses} miss(es)** *(+${shieldAbsorbed} blocked)*${shieldLine}\n\n☠️ **${target.username}** eliminated for **${Math.round(elimMs/60000)} minutes!**\n${dropped ? `🪦 Dropped sprite: **${spriteLabel(dropped)}**\n` : ""}${dustStolen ? `💠 Striker stole **${dustStolen.toLocaleString()} Sprite Dust**.\n` : ""}\n\`/reboot\` for **299 V-Bucks**.`).setColor(0xff0000).setThumbnail(target.displayAvatarURL()).setTimestamp()] });
         } else {
           await interaction.editReply({ embeds: [new EmbedBuilder().setTitle(`${emoji} ${interaction.user.username} missed every shot!`).setDescription(`Fired **${usedAmmo} rounds**... **0 hits, ${misses} misses.**${shieldLine}\n\n🔫 All ammo wasted.`).setColor(0x888888).setTimestamp()] });
         }
@@ -2046,8 +2600,22 @@ const commands = [
           updateUser(target.id, { buildCharges: newCharges, ...(newCharges === 0 ? { buildMaterial: "none" } : {}) });
         }
         if (hit && !blocked) {
-          updateUser(target.id, { eliminatedUntil: Date.now()+10*60*1000 });
-          await interaction.editReply({ embeds: [new EmbedBuilder().setTitle(`${emoji} Direct Hit!`).setDescription(`**${interaction.user.username}** attacked **${target.username}** with **${weaponName}**!\n\n*"${desc2}"*\n\n💥 **ELIMINATED!** ${target.username} can't interact for **10 minutes**.\n\`/reboot\` for **299 V-Bucks**.`).setColor(0xff0000).setThumbnail(target.displayAvatarURL()).setTimestamp()] });
+          const kingBonus = equippedAttackerSprite?.name === "King Sprite" ? 5 : 0;
+          updateUser(target.id, { eliminatedUntil: Date.now()+(10 + kingBonus)*60*1000 });
+          const downedSprite = handleDownedSprite(target.id, userId);
+          const dropped = downedSprite.sprite;
+          if (downedSprite.revived) await interaction.channel?.send({ content: `<@${target.id}> 🖤 Your **Grim Sprite** revived you instantly and cursed the shooter. **${downedSprite.dustLost.toLocaleString()} Sprite Dust** was transferred.` }).catch(() => {});
+          else if (dropped) await interaction.channel?.send({ content: `<@${target.id}> 🪦 You dropped your equipped **${spriteLabel(dropped)}** after being shot. Someone can use \`/steal player:${target.username}\` before it is revived.` }).catch(() => {});
+          let dustStolen = 0;
+          if (equippedAttackerSprite?.name === "Striker Sprite" && roll(25)) {
+            const targetDust = getUser(target.id);
+            dustStolen = Math.floor((targetDust.spriteDust ?? 0) * 0.05);
+            if (dustStolen > 0) {
+              updateUser(target.id, { spriteDust: Math.max(0, targetDust.spriteDust - dustStolen) });
+              updateUser(userId, { spriteDust: (getUser(userId).spriteDust ?? 0) + dustStolen });
+            }
+          }
+          await interaction.editReply({ embeds: [new EmbedBuilder().setTitle(`${emoji} Direct Hit!`).setDescription(`**${interaction.user.username}** attacked **${target.username}** with **${weaponName}**!\n\n*"${desc2}"*\n\n💥 **ELIMINATED!** ${target.username} can't interact for **${10 + kingBonus} minutes**.\n${dropped ? `🪦 Dropped sprite: **${spriteLabel(dropped)}**\n` : ""}${dustStolen ? `💠 Striker stole **${dustStolen.toLocaleString()} Sprite Dust**.\n` : ""}\n\`/reboot\` for **299 V-Bucks**.`).setColor(0xff0000).setThumbnail(target.displayAvatarURL()).setTimestamp()] });
         } else if (blocked) {
           await interaction.editReply({ embeds: [new EmbedBuilder().setTitle(`🏗️ Hit Blocked!`).setDescription(`**${interaction.user.username}** attacked **${target.username}** with **${weaponName}**!\n\n*"${desc2}"*\n\n🏗️ **${target.username}'s ${BUILD_MATS[targetUser.buildMaterial]?.label ?? "structure"} absorbed the shot!**`).setColor(0x888888).setTimestamp()] });
         } else {
