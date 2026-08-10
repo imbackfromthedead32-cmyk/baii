@@ -1516,59 +1516,90 @@ const commands = [
 
   // ── SPRITES ────────────────────────────────────────────────────────────────
   {
-    data: new SlashCommandBuilder().setName("sprites").setDescription("View your Sprite Index with variants"),
+    data: new SlashCommandBuilder().setName("sprites").setDescription("View your Sprite Index one sprite per page"),
     async execute(interaction) {
       const userId = interaction.user.id, user = getUser(userId);
       await loadSpriteImages();
-      const pageCount = Math.max(1, Math.ceil(SPRITES.length / SPRITE_PAGE_SIZE));
+      const pageCount = Math.max(1, SPRITES.length);
       let page = 0;
+      let selectedVariant = "normal";
+
       const build = () => {
-        const slice = SPRITES.slice(page * SPRITE_PAGE_SIZE, (page + 1) * SPRITE_PAGE_SIZE);
-        const ownedInstances = allUserSprites(user).filter(s => slice.some(x => x.id === s.spriteId));
-        const lines = slice.map(s => {
-          const ownedVariants = new Set(ownedInstances.filter(x => x.spriteId === s.id).map(x => x.variant));
-          const variants = SPRITE_VARIANTS.map(v => `${ownedVariants.has(v.id) ? "✅" : "❌"} ${v.name}`).join(" • ");
-          return `${SPRITE_RARITY_EMOJI[s.rarity]} **${s.name}** — ${s.rarity}
-> ${s.ability}
-> **Variants:** ${variants}`;
-        });
-        const embeds = slice.map((sprite, index) => {
-          const ownedVariants = new Set(ownedInstances.filter(x => x.spriteId === sprite.id).map(x => x.variant));
-          const image = spriteImageUrl(sprite, "normal");
-          const e = new EmbedBuilder().setTitle(`${SPRITE_RARITY_EMOJI[sprite.rarity]} ${sprite.name}`)
-            .setDescription(`**${sprite.rarity}**\n\n${sprite.ability}\n\n**Variants**\n${SPRITE_VARIANTS.map(v => `${ownedVariants.has(v.id) ? "✅" : "❌"} ${v.name}`).join("\n")}`)
-            .setColor(SPRITE_RARITY_COLOR[sprite.rarity]);
-          if (image) e.setImage(image);
-          return e;
-        });
-        const embed = new EmbedBuilder().setTitle(`🧩 ${interaction.user.username}'s Sprite Index • Page ${page+1}/${pageCount}`)
-          .setDescription(`Page **${page+1}/${pageCount}** — each card shows the actual sprite image when the Fortnite Sprite API is configured.\n\n${lines.join("\n\n")}`)
+        const sprite = SPRITES[page] ?? SPRITES[0];
+        const ownedVariants = new Set(allUserSprites(user).filter(x => x.spriteId === sprite.id).map(x => x.variant));
+        const variantLines = SPRITE_VARIANTS.map(v => `${ownedVariants.has(v.id) ? "✅" : "❌"} **${v.name}**`).join("\n");
+        const image = spriteImageUrl(sprite, selectedVariant);
+        const embed = new EmbedBuilder()
+          .setTitle(`${SPRITE_RARITY_EMOJI[sprite.rarity]} ${sprite.name}`)
+          .setDescription(`**Page ${page + 1}/${pageCount}**\n\n**Rarity:** ${sprite.rarity}\n\n${sprite.ability}\n\n**Variants**\n${variantLines}\n\n🖼️ **Viewing:** ${getSpriteVariant(selectedVariant).name}`)
           .addFields(
             { name: "🪶 Sprite Dust", value: `${(user.spriteDust ?? 0).toLocaleString()}`, inline: true },
             { name: "🎽 Equipped", value: getEquippedSprite(user) ? spriteLabel(getEquippedSprite(user)) : "None", inline: true },
             { name: "☠️ Dead Sprites", value: `${deadSprites(user).length}`, inline: true }
-          ).setColor(0x5865f2).setFooter({ text: `Use the arrows to browse • Sprites can be found from fishing, supply drops, chests and openable commands.` }).setTimestamp();
-        embeds.unshift(embed);
+          )
+          .setColor(SPRITE_RARITY_COLOR[sprite.rarity])
+          .setFooter({ text: "Use the arrows to browse sprites • Select a variant to view its image." })
+          .setTimestamp();
+        if (image) embed.setImage(image);
+
+        const variantRow = new ActionRowBuilder().addComponents(
+          new StringSelectMenuBuilder()
+            .setCustomId(`sprites_variant_${userId}`)
+            .setPlaceholder("🖼️ Select a variant to view")
+            .addOptions(SPRITE_VARIANTS.map(v => new StringSelectMenuOptionBuilder()
+              .setLabel(v.name)
+              .setDescription(`${ownedVariants.has(v.id) ? "Owned" : "Not owned"}${v.id === selectedVariant ? " • Currently viewing" : ""}`.slice(0, 100))
+              .setValue(v.id)
+              .setDefault(v.id === selectedVariant)))
+        );
         const nav = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId(`sprites_prev_${userId}`).setLabel("◀ Previous").setStyle(ButtonStyle.Secondary).setDisabled(page === 0),
-          new ButtonBuilder().setCustomId(`sprites_next_${userId}`).setLabel("Next ▶").setStyle(ButtonStyle.Primary).setDisabled(page === pageCount-1)
+          new ButtonBuilder().setCustomId(`sprites_next_${userId}`).setLabel("Next ▶").setStyle(ButtonStyle.Primary).setDisabled(page === pageCount - 1)
         );
-        return { embeds, nav };
+        return { embeds: [embed], components: [variantRow, nav] };
       };
-      const { embeds, nav } = build();
-      const msg = await interaction.reply({ embeds, components: [nav], fetchReply: true });
-      const col = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 120000, filter: b => b.user.id === userId });
+
+      const built = build();
+      const msg = await interaction.reply({ embeds: built.embeds, components: built.components, fetchReply: true });
+      const col = msg.createMessageComponentCollector({
+        componentType: ComponentType.Button,
+        time: 120000,
+        filter: b => b.user.id === userId
+      });
+      const selectCol = msg.createMessageComponentCollector({
+        componentType: ComponentType.StringSelect,
+        time: 120000,
+        filter: s => s.user.id === userId
+      });
       col.on("collect", async btn => {
-        if (btn.customId.endsWith("prev_" + userId)) page = Math.max(0, page - 1);
-        else page = Math.min(pageCount - 1, page + 1);
-        const built = build(); await btn.update({ embeds: built.embeds, components: [built.nav] });
+        if (btn.customId.endsWith("prev_" + userId)) {
+          page = Math.max(0, page - 1);
+        } else {
+          page = Math.min(pageCount - 1, page + 1);
+        }
+        selectedVariant = "normal";
+        const next = build();
+        await btn.update({ embeds: next.embeds, components: next.components });
+      });
+      selectCol.on("collect", async sel => {
+        selectedVariant = sel.values[0];
+        const next = build();
+        await sel.update({ embeds: next.embeds, components: next.components });
       });
       col.on("end", () => msg.edit({ components: [] }).catch(() => {}));
+
       if ((user.spriteInventory ?? []).length === 0 && (user.stolenSprites ?? []).length === 0) {
         const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`sprite_starter_${userId}`).setLabel("🎁 Open Starter Sprite").setStyle(ButtonStyle.Success));
         const starter = await interaction.followUp({ embeds: [new EmbedBuilder().setTitle("🎁 Starter Sprite Available!").setDescription("You don't own any sprites yet. Open your starter box to receive an **Aura Sprite**, **Boss Sprite**, or — with a **1% chance** — a Mythic sprite.").setColor(0x00d4ff)], components: [row], fetchReply: true });
         const sc = starter.createMessageComponentCollector({ componentType: ComponentType.Button, time: 60000, filter: b => b.user.id === userId });
-        sc.on("collect", async btn => { const current = getUser(userId); if ((current.spriteInventory ?? []).length || (current.stolenSprites ?? []).length) return btn.update({ content: "❌ You already have a sprite.", embeds: [], components: [] }); const reward = starterSpriteRoll(); addSpriteToInventory(userId, reward); await btn.update({ embeds: [new EmbedBuilder().setTitle("🎁 Starter Sprite Opened!").setDescription(`You received ${spriteLabel(reward)}!\n\n**Ability:** ${reward.ability}\n\nUse /equipsprite to equip it.`).setColor(SPRITE_RARITY_COLOR[reward.rarity])], components: [] }); sc.stop(); });
+        sc.on("collect", async btn => {
+          const current = getUser(userId);
+          if ((current.spriteInventory ?? []).length || (current.stolenSprites ?? []).length) return btn.update({ content: "❌ You already have a sprite.", embeds: [], components: [] });
+          const reward = starterSpriteRoll();
+          addSpriteToInventory(userId, reward);
+          await btn.update({ embeds: [new EmbedBuilder().setTitle("🎁 Starter Sprite Opened!").setDescription(`You received ${spriteLabel(reward)}!\n\n**Ability:** ${reward.ability}\n\nUse /equipsprite to equip it.`).setColor(SPRITE_RARITY_COLOR[reward.rarity])], components: [] });
+          sc.stop();
+        });
       }
     },
   },
