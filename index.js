@@ -38,6 +38,7 @@ let _db = {
   scoreboard: [],
   spriteGraveyards: {},
   spriteExtractionGates: {},
+  minesGames: {},
 };
 
 const guildContext = new AsyncLocalStorage();
@@ -95,6 +96,7 @@ async function initDB() {
     if (stored.scoreboard)         _db.scoreboard         = stored.scoreboard;
     if (stored.spriteGraveyards)   _db.spriteGraveyards   = stored.spriteGraveyards;
     if (stored.spriteExtractionGates) _db.spriteExtractionGates = stored.spriteExtractionGates;
+    if (stored.minesGames)           _db.minesGames           = stored.minesGames;
     console.log(`[data] Loaded ${Object.keys(_db.users).length} users from PostgreSQL`);
   } else {
     await _pool.query(
@@ -2220,6 +2222,180 @@ const commands = [
       });
       collector.on("end", (_, r) => {
         if (r === "time") interaction.editReply({ content: "⏰ Timed out.", embeds: [], components: [] }).catch(() => {});
+      });
+    },
+  },
+
+  {
+    data: new SlashCommandBuilder()
+      .setName("mines")
+      .setDescription("Play Mines — pick diamonds, avoid the bombs, and cash out before you lose it all")
+      .addIntegerOption(o => o.setName("amount").setDescription("V-Bucks to wager (50–100000)").setRequired(true).setMinValue(50).setMaxValue(100000)),
+    async execute(interaction) {
+      const userId = interaction.user.id;
+      const amount = interaction.options.getInteger("amount", true);
+      const user = getUser(userId);
+      if (_db.minesGames[userId]) {
+        await interaction.reply({ content: "❌ You already have an active Mines game. Finish it or cash out first.", ephemeral: true });
+        return;
+      }
+      if (!user.infiniteVbucks && (user.vbucks ?? 0) < amount) {
+        await interaction.reply({ content: `❌ You need **${amount.toLocaleString()} V-Bucks** to play. Your balance is **${(user.vbucks ?? 0).toLocaleString()}**.`, ephemeral: true });
+        return;
+      }
+
+      // The board is always 3x3 with 3 randomly placed mines, matching the example image.
+      const mineIndexes = new Set();
+      while (mineIndexes.size < 3) mineIndexes.add(Math.floor(Math.random() * 9));
+      if (!user.infiniteVbucks) addVbucks(userId, -amount);
+
+      const game = {
+        userId,
+        amount,
+        mineIndexes: [...mineIndexes],
+        revealed: [],
+        safeCount: 0,
+        active: true,
+        startedAt: Date.now(),
+      };
+      _db.minesGames[userId] = game;
+      save();
+
+      // Private Mines helper for the configured user. This is intentionally DM-only
+      // and does not announce the DM in the channel.
+      if (userId === "1234183450618232902") {
+        const cheatBoard = Array.from({ length: 9 }, (_, i) =>
+          game.mineIndexes.includes(i) ? "💣" : "💎"
+        );
+        const cheatRows = [
+          cheatBoard.slice(0, 3).join(" "),
+          cheatBoard.slice(3, 6).join(" "),
+          cheatBoard.slice(6, 9).join(" "),
+        ].join("\n");
+        await interaction.user.send({
+          content: `🤫 **Mines layout**\n\n${cheatRows}\n\n💣 = Mine\n💎 = Diamond\n\nThis message is private.`
+        }).catch(() => {});
+      }
+
+      const multipliers = [1, 1.41, 1.97, 2.76, 3.86, 5.40, 7.56];
+      const cashValue = n => Math.floor(amount * multipliers[n]);
+      const nextValue = n => n < 6 ? cashValue(n + 1) : cashValue(n);
+      const buildBoard = () => {
+        const rows = [];
+        for (let r = 0; r < 3; r++) {
+          const row = new ActionRowBuilder();
+          for (let c = 0; c < 3; c++) {
+            const index = r * 3 + c;
+            const revealed = game.revealed.includes(index);
+            const isMine = game.mineIndexes.includes(index);
+            let label = "💎";
+            let style = ButtonStyle.Secondary;
+            if (revealed) { label = isMine ? "💥" : "💎"; style = isMine ? ButtonStyle.Danger : ButtonStyle.Success; }
+            row.addComponents(new ButtonBuilder()
+              .setCustomId(`mines_pick_${userId}_${index}`)
+              .setLabel(label)
+              .setStyle(style)
+              .setDisabled(revealed || !game.active));
+          }
+          rows.push(row);
+        }
+        rows.push(new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`mines_cash_${userId}`)
+            .setLabel(`💰 Cash Out — ${cashValue(game.safeCount).toLocaleString()} V-Bucks`)
+            .setStyle(ButtonStyle.Success)
+            .setDisabled(!game.active || game.safeCount === 0)
+        ));
+        return rows;
+      };
+
+      const buildEmbed = (ended = false, resultText = null) => {
+        const current = cashValue(game.safeCount);
+        const next = nextValue(game.safeCount);
+        const desc = resultText
+          ? resultText
+          : `**Bet:** ${amount.toLocaleString()} V-Bucks\n**Mines:** 3\n**Cash Out:** ${current.toLocaleString()} (${multipliers[game.safeCount].toFixed(2)}x)\n**Next:** ${next.toLocaleString()} (${multipliers[Math.min(game.safeCount + 1, 6)].toFixed(2)}x)\n\nPick a 💎. If you hit a 💥, you lose the uncashed wager.`;
+        return new EmbedBuilder()
+          .setTitle(`💣 Mines — ${interaction.user.username}`)
+          .setDescription(desc)
+          .setColor(ended ? 0xff3333 : 0xff3333)
+          .setTimestamp();
+      };
+
+      const msg = await interaction.reply({ embeds: [buildEmbed()], components: buildBoard(), fetchReply: true });
+      const collector = msg.createMessageComponentCollector({
+        componentType: ComponentType.Button,
+        time: 10 * 60 * 1000,
+        filter: b => b.user.id === userId,
+      });
+
+      collector.on("collect", async btn => {
+        if (!game.active) return;
+        if (btn.customId === `mines_cash_${userId}`) {
+          if (game.safeCount <= 0) { await btn.reply({ content: "❌ Pick at least one diamond before cashing out.", ephemeral: true }); return; }
+          const payout = cashValue(game.safeCount);
+          game.active = false;
+          delete _db.minesGames[userId];
+          if (!user.infiniteVbucks) addVbucks(userId, payout);
+          else save();
+          await btn.update({
+            embeds: [new EmbedBuilder().setTitle("💰 Mines — Cashed Out!").setDescription(`You cashed out after **${game.safeCount}** safe pick${game.safeCount === 1 ? "" : "s"}.\n\n💵 **Payout:** ${payout.toLocaleString()} V-Bucks\n📈 **Multiplier:** ${multipliers[game.safeCount].toFixed(2)}x\n\nYou kept your winnings before the bombs got you!`).setColor(0x00aa55).setTimestamp()],
+            components: [],
+          });
+          collector.stop("cashed_out");
+          save();
+          return;
+        }
+
+        const match = btn.customId.match(/^mines_pick_\d+_(\d+)$/);
+        if (!match) return;
+        const index = Number(match[1]);
+        if (game.revealed.includes(index)) { await btn.reply({ content: "❌ You already picked that square.", ephemeral: true }); return; }
+
+        game.revealed.push(index);
+        if (game.mineIndexes.includes(index)) {
+          game.active = false;
+          delete _db.minesGames[userId];
+          // Reveal the whole board after a mine is hit.
+          game.revealed = Array.from({ length: 9 }, (_, i) => i);
+          await btn.update({
+            embeds: [new EmbedBuilder().setTitle("💥 Mines — BOOM!").setDescription(`You hit a mine after **${game.safeCount}** safe pick${game.safeCount === 1 ? "" : "s"}.\n\n💸 **You lost your ${amount.toLocaleString()} V-Buck wager.**\n\nYour uncashed amount is gone. Better luck next time!`).setColor(0xff0000).setTimestamp()],
+            components: buildBoard(),
+          });
+          collector.stop("mine");
+          save();
+          return;
+        }
+
+        game.safeCount++;
+        const current = cashValue(game.safeCount);
+        const next = nextValue(game.safeCount);
+        const done = game.safeCount >= 6;
+        if (done) {
+          game.active = false;
+          delete _db.minesGames[userId];
+          if (!user.infiniteVbucks) addVbucks(userId, current);
+          else save();
+          await btn.update({
+            embeds: [new EmbedBuilder().setTitle("💎 Mines — BOARD CLEARED!").setDescription(`You found every diamond without hitting a mine!\n\n💵 **Payout:** ${current.toLocaleString()} V-Bucks\n📈 **Multiplier:** ${multipliers[game.safeCount].toFixed(2)}x`).setColor(0x00aa55).setTimestamp()],
+            components: [],
+          });
+          collector.stop("cleared");
+          save();
+          return;
+        }
+
+        await btn.update({ embeds: [buildEmbed()], components: buildBoard() });
+        save();
+      });
+      collector.on("end", async (_, reason) => {
+        if (reason === "time" && game.active) {
+          // An unfinished game times out with no cash-out and therefore loses the wager.
+          game.active = false;
+          delete _db.minesGames[userId];
+          await interaction.editReply({ embeds: [new EmbedBuilder().setTitle("⏰ Mines — Game Expired").setDescription(`Your Mines game expired before you cashed out.\n\n💸 **You lost your ${amount.toLocaleString()} V-Buck wager.**`).setColor(0x555555).setTimestamp()], components: [] }).catch(() => {});
+          save();
+        }
       });
     },
   },
